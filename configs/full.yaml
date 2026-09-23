@@ -1,0 +1,28 @@
+# Full study (Table 1, "planned"): ~150 parents x 10 subsamples, ~40 pipelines.
+# Needs `pip install -e .[openml]` and network access to openml.org.
+# Switch portfolio to full_tabpfn once TabPFN is installed.
+name: full
+seed: 0
+sources: [openml, sklearn, synthetic, moons_circles]
+openml_suite_id: 99            # OpenML-CC18
+openml_extra:
+  # small datasets (< 500 rows)
+  - ionosphere
+  - sonar
+  - heart-statlog
+  - hepatitis
+  - haberman
+  # high-dimensional (more features than rows)
+  - arcene
+  - madelon
+  - gina
+  # TODO: add microarray datasets once chosen
+n_synthetic: 40
+n_moons_circles: 10
+max_rows: 2000
+subsamples_per_parent: 10
+portfolio: full
+cv_folds: 3
+fit_timeout: 120
+n_jobs: -1
+outer_folds: 5
