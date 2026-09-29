@@ -31,6 +31,13 @@ def regret_curve(scores: pd.DataFrame, perf: pd.DataFrame) -> pd.DataFrame:
     return pd.DataFrame({k: regret_at_k(scores, perf, k) for k in range(1, P + 1)})
 
 
+def cost_at_k(scores: pd.DataFrame, secs: pd.DataFrame, k: int) -> pd.Series:
+    """Seconds spent running the top-k recommended pipelines, per task."""
+    s = secs.loc[scores.index, scores.columns].to_numpy()
+    top = ranking(scores)[:, :k]
+    return pd.Series(np.take_along_axis(s, top, axis=1).sum(axis=1), index=scores.index)
+
+
 def spearman_per_task(scores: pd.DataFrame, perf: pd.DataFrame) -> pd.Series:
     perf = perf.loc[scores.index, scores.columns]
     out = []

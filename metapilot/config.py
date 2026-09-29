@@ -20,6 +20,7 @@ class Config:
 
     # Base-level data (Section 2)
     sources: list[str] = field(default_factory=lambda: ["sklearn", "synthetic", "moons_circles"])
+    sklearn_datasets: list[str] = field(default_factory=lambda: ["breast_cancer", "wine", "iris", "digits"])
     n_synthetic: int = 20
     n_moons_circles: int = 6
     openml_suite_id: int = 99

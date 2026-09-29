@@ -21,6 +21,7 @@ dependencies = [
 
 [project.optional-dependencies]
 openml = ["openml>=0.14"]
+flaml = ["flaml[automl]>=2.1"]
 dev = ["pytest>=7"]
 
 [project.scripts]

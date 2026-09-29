@@ -28,8 +28,51 @@ python -m metapilot build    --config configs/pilot.yaml --out data/pilot
 python -m metapilot evaluate --config configs/pilot.yaml --meta data/pilot --out runs/pilot
 python -m metapilot evaluate --config configs/pilot.yaml --meta data/pilot --out runs/pilot_nolm \
                              --drop-group landmarkers          # landmarker ablation (Section 5.4)
+python -m metapilot evaluate --config configs/pilot.yaml --meta data/pilot --out runs/pilot_seeds \
+                             --seeds 1 2 3 4                   # repeated outer CV, see summary_seeds.csv
 python -m metapilot plots    --results runs/pilot
 python -m pytest
+```
+
+## Full study
+
+The full study (`configs/full.yaml`) uses OpenML-CC18, the supplementary OpenML datasets, wine, iris, 40
+synthetic parents and 10 moons/circles parents. Each parent gets 10 subsamples, and the 38-pipeline portfolio is
+run on tasks capped at 2,000 rows. That comes to roughly 170,000 model fits. Timing the portfolio on 2,000-row
+tasks gives 30–60 s for a typical task and a few minutes for wide ones, so budget **about 25–40 CPU-hours**.
+Split the work across group members:
+
+```bash
+pip install -e ".[openml,flaml]"
+
+# On machine i of 4 (i = 0, 1, 2, 3). Everyone uses the same config.
+python -m metapilot build --config configs/full.yaml --out data/full --shard i/4
+```
+
+Every finished task is saved straight away to `data/full/parts/<task>.json`. If a build is interrupted, run the
+same command again and it continues where it stopped. When all shards are done, copy every machine's `parts/`
+folder into one `data/full/parts/` and run:
+
+```bash
+python -m metapilot assemble --out data/full
+python -m metapilot evaluate --config configs/full.yaml --meta data/full --out runs/full --seeds 1 2 3 4
+python -m metapilot evaluate --config configs/full.yaml --meta data/full --out runs/full_nolm --drop-group landmarkers
+```
+
+Every machine derives the task list from the config alone. Each parent gets its own random seed based on its
+name, so the shards line up without any coordination. A part built with different settings is rejected by
+`assemble`. Parents that look like copies of each other (same shape and class counts) are dropped, because copies
+in different outer folds would leak. This is also why `full.yaml` leaves out scikit-learn's breast cancer and
+digits datasets: CC18 already contains them as wdbc and optdigits.
+
+**FLAML baseline.** FLAML runs on the same tasks and CV folds with a fixed time budget per fold. `evaluate` then
+adds a FLAML row to `summary.csv`. For an equal-budget comparison, set `--budget` to about `cost@3_s / 3` of the
+meta-models, which `evaluate` reports. `--shard` and resume work the same way as for `build`, and `--max-tasks`
+runs FLAML on an evenly spread subset.
+
+```bash
+python -m metapilot flaml --config configs/full.yaml --meta data/full --budget 10 --shard i/4
+python -m metapilot flaml --config configs/full.yaml --meta data/full --budget 10 --max-tasks 300   # cheaper
 ```
 
 ## Code layout
@@ -42,7 +85,8 @@ python -m pytest
 | `metapilot/augment.py` | 3.2 | Subsamples 30–100% of rows and 50–100% of columns, and rejects tasks with a class under 6 samples |
 | `metapilot/portfolio.py` | 2.3 | The 18-pipeline pilot portfolio (Table 2), the ~38-pipeline full portfolio and optional TabPFN |
 | `metapilot/metafeatures.py` | 3.3 | The 14 meta-features (simple, statistical, information-theoretic, landmarkers) |
-| `metapilot/metadataset.py` | 2.2 | Runs every pipeline on every task with stratified CV and a per-fit time limit, then writes the meta-dataset |
+| `metapilot/metadataset.py` | 2.2 | Runs every pipeline on every task with stratified CV and a per-fit time limit, with per-task checkpoints, sharding and assembly, then writes the meta-dataset |
+| `metapilot/baselines.py` | 4.5 | FLAML AutoML baseline on the same tasks and folds |
 | `metapilot/metalevel.py` | 3.4, 3.5 | Missing-value fill, gap/relevance targets, long format, grouped folds, family win share |
 | `metapilot/selectors.py` | 4.3, 4.5 | Random, single best, kNN meta-learner, LightGBM regressor, LightGBM LambdaRank |
 | `metapilot/metrics.py` | 4.2, 4.6 | Regret@k, top-1 hit, Spearman, bootstrap CIs, regret curve |

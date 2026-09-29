@@ -22,6 +22,7 @@ class MetaData:
     perf: pd.DataFrame         # task x pipeline, accuracy in [0, 1], no missing values
     perf_raw: pd.DataFrame     # as measured, NaN = failed / timed out
     family: dict[str, str]     # pipeline -> family
+    secs: pd.DataFrame | None = None  # task x pipeline, fit+predict seconds summed over CV folds
 
     @property
     def pipelines(self) -> list[str]:
@@ -43,7 +44,10 @@ class MetaData:
         usable = perf_raw.notna().any(axis=1)
         ids = perf_raw.index[usable]
         perf = fill_missing(perf_raw.loc[ids])
-        return cls(tasks.loc[ids], mf.loc[ids], perf, perf_raw.loc[ids], family)
+        secs = None
+        if (d / "fit_seconds.csv").exists():
+            secs = pd.read_csv(d / "fit_seconds.csv", index_col="task_id").loc[ids, perf.columns]
+        return cls(tasks.loc[ids], mf.loc[ids], perf, perf_raw.loc[ids], family, secs)
 
 
 def fill_missing(perf: pd.DataFrame) -> pd.DataFrame:
@@ -81,6 +85,13 @@ def long_format(mf: pd.DataFrame, pipelines: list[str]) -> pd.DataFrame:
     X[[f"pipe={p}" for p in pipelines]] = onehot
     X.index = pd.MultiIndex.from_product([mf.index, pipelines], names=["task_id", "pipeline"])
     return X
+
+
+def folds_path(meta_dir: str | Path, seed: int, primary_seed: int) -> Path:
+    """``folds.csv`` is the canonical split shared by every method; extra
+    seeds used for robustness checks get their own file."""
+    name = "folds.csv" if seed == primary_seed else f"folds_seed{seed}.csv"
+    return Path(meta_dir) / name
 
 
 def make_folds(meta: MetaData, n_splits: int, seed: int, path: str | Path | None = None) -> pd.Series:

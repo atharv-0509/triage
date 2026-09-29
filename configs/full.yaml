@@ -17,6 +17,9 @@ openml_extra:
   - madelon
   - gina
   # TODO: add microarray datasets once chosen
+# breast_cancer and digits are left out: OpenML-CC18 already has the same data
+# (wdbc, optdigits), and copies in different outer folds would leak.
+sklearn_datasets: [wine, iris]
 n_synthetic: 40
 n_moons_circles: 10
 max_rows: 2000

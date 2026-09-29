@@ -38,7 +38,7 @@ class Dataset:
 def load_sources(cfg: Config) -> list[Dataset]:
     rng = np.random.default_rng(cfg.seed)
     loaders = {
-        "sklearn": lambda: load_sklearn_builtins(),
+        "sklearn": lambda: load_sklearn_builtins(cfg.sklearn_datasets),
         "synthetic": lambda: make_synthetic(cfg.n_synthetic, rng),
         "moons_circles": lambda: make_moons_circles(cfg.n_moons_circles, rng),
         "openml": lambda: load_openml(cfg),
@@ -69,9 +69,14 @@ _SKLEARN = {
 }
 
 
-def load_sklearn_builtins() -> list[Dataset]:
+def load_sklearn_builtins(names: list[str] | None = None) -> list[Dataset]:
+    names = list(_SKLEARN) if names is None else names
+    unknown = set(names) - set(_SKLEARN)
+    if unknown:
+        raise ValueError(f"unknown sklearn datasets {sorted(unknown)}; choose from {sorted(_SKLEARN)}")
     out = []
-    for name, (loader, desc) in _SKLEARN.items():
+    for name in names:
+        loader, desc = _SKLEARN[name]
         bunch = loader(as_frame=True)
         out.append(Dataset(name, bunch.data.copy(), bunch.target.copy(), "sklearn", desc))
     return out

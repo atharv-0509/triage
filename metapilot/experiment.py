@@ -2,7 +2,10 @@
 
 Writes to ``out_dir``:
 
-* ``summary.csv``            - Table 6 (regret@1/@3 with 95% CIs, top-1 hit, Spearman)
+* ``summary.csv``            - Table 6 (regret@1/@3 with 95% CIs, top-1 hit, Spearman,
+                               mean seconds to run the top-1/top-3 recommendations,
+                               and a FLAML row when ``<meta_dir>/flaml.csv`` exists)
+* ``summary_seeds.csv``      - mean and std of each metric over seeds (``--seeds``)
 * ``per_task_regret1.csv``   - Regret@1 per task and selector
 * ``regret_curve.csv``       - mean regret vs. number of pipelines evaluated
 * ``family_wins.csv``        - share of tasks won by each family (Figure 2)
@@ -21,7 +24,7 @@ import pandas as pd
 from . import metrics
 from .config import Config
 from .metafeatures import GROUPS
-from .metalevel import MetaData, family_win_share, make_folds
+from .metalevel import MetaData, family_win_share, folds_path, make_folds
 from .selectors import LGBMGapRegressor, default_selectors
 
 log = logging.getLogger(__name__)
@@ -29,7 +32,10 @@ log = logging.getLogger(__name__)
 DOMINANCE_LIMIT = 0.5
 
 
-def run(meta_dir: str | Path, out_dir: str | Path, cfg: Config, drop_groups: tuple[str, ...] = ()) -> pd.DataFrame:
+def run(meta_dir: str | Path, out_dir: str | Path, cfg: Config, drop_groups: tuple[str, ...] = (),
+        extra_seeds: tuple[int, ...] = ()) -> pd.DataFrame:
+    """Evaluate all selectors. ``extra_seeds`` repeats the grouped outer CV
+    with other fold assignments and selector seeds (robustness check)."""
     meta = MetaData.load(meta_dir)
     out = Path(out_dir)
     (out / "scores").mkdir(parents=True, exist_ok=True)
@@ -53,9 +59,55 @@ def run(meta_dir: str | Path, out_dir: str | Path, cfg: Config, drop_groups: tup
         log.warning("family %s is best on %.0f%% of tasks; the dataset pool may need more diversity",
                     wins.index[0], 100 * wins.iloc[0])
 
-    folds = make_folds(meta, cfg.outer_folds, cfg.seed, Path(meta_dir) / "folds.csv")
+    seeds = list(dict.fromkeys([cfg.seed, *extra_seeds]))  # primary seed first, no repeats
+    per_seed = []
+    for seed in seeds:
+        folds = make_folds(meta, cfg.outer_folds, seed, folds_path(meta_dir, seed, cfg.seed))
+        oof, gains = cross_validate(meta, mf, folds, seed, cfg.knn_k)
+        rows = [{"selector": name, "seed": seed,
+                 **metrics.summarise(scores, meta.perf, cfg.bootstrap, seed, cfg.hit_tolerance)}
+                for name, scores in oof.items()]
+        per_seed.append(pd.DataFrame(rows))
+        if seed == cfg.seed:
+            primary, primary_gains = oof, gains
 
-    selectors = default_selectors(cfg.seed, cfg.knn_k)
+    # Detailed outputs use the primary seed (the shared folds.csv split).
+    rows, per_task, curves = [], {}, {}
+    for name, scores in primary.items():
+        scores.to_csv(out / "scores" / f"{_slug(name)}.csv")
+        s = per_seed[0].set_index("selector").loc[name].drop("seed").to_dict()
+        if meta.secs is not None:
+            s["cost@1_s"] = metrics.cost_at_k(scores, meta.secs, 1).mean()
+            s["cost@3_s"] = metrics.cost_at_k(scores, meta.secs, 3).mean()
+        rows.append({"selector": name, **s})
+        per_task[name] = metrics.regret_at_k(scores, meta.perf, 1)
+        curves[name] = metrics.regret_curve(scores, meta.perf).mean()
+
+    flaml = flaml_row(meta, Path(meta_dir) / "flaml.csv", cfg)
+    if flaml is not None:
+        rows.append(flaml)
+
+    summary = pd.DataFrame(rows).set_index("selector")
+    summary.to_csv(out / "summary.csv", float_format="%.4f")
+    pd.DataFrame(per_task).to_csv(out / "per_task_regret1.csv", float_format="%.4f")
+    pd.DataFrame(curves).rename_axis("n_evaluated").to_csv(out / "regret_curve.csv", float_format="%.4f")
+    gain = pd.concat(primary_gains, axis=1).mean(axis=1)
+    gain.sort_values(ascending=False).rename("gain").to_csv(out / "feature_gain.csv", index_label="feature")
+
+    if len(seeds) > 1:
+        all_seeds = pd.concat(per_seed)
+        all_seeds.to_csv(out / "summary_by_seed.csv", index=False, float_format="%.4f")
+        cols = ["regret@1", "regret@3", "top1_hit", "spearman"]
+        agg = all_seeds.groupby("selector", sort=False)[cols].agg(["mean", "std"])
+        agg.columns = [f"{m}_{stat}" for m, stat in agg.columns]
+        agg.to_csv(out / "summary_seeds.csv", float_format="%.4f")
+        log.info("summary over seeds %s written to summary_seeds.csv", seeds)
+    return summary
+
+
+def cross_validate(meta: MetaData, mf: pd.DataFrame, folds: pd.Series, seed: int, knn_k: int):
+    """Out-of-fold scores of every selector, plus LightGBM regressor gains."""
+    selectors = default_selectors(seed, knn_k)
     oof = {s.name: [] for s in selectors}
     gains = []
     for k in sorted(folds.unique()):
@@ -65,24 +117,24 @@ def run(meta_dir: str | Path, out_dir: str | Path, cfg: Config, drop_groups: tup
             oof[sel.name].append(sel.score(mf.loc[te]))
             if isinstance(sel, LGBMGapRegressor):
                 gains.append(sel.feature_gain())
+    return {name: pd.concat(parts).loc[meta.perf.index] for name, parts in oof.items()}, gains
 
-    rows, per_task, curves = [], {}, {}
-    for name, parts in oof.items():
-        scores = pd.concat(parts).loc[meta.perf.index]
-        scores.to_csv(out / "scores" / f"{_slug(name)}.csv")
-        s = metrics.summarise(scores, meta.perf, cfg.bootstrap, cfg.seed, cfg.hit_tolerance)
-        rows.append({"selector": name, **s})
-        per_task[name] = metrics.regret_at_k(scores, meta.perf, 1)
-        curves[name] = metrics.regret_curve(scores, meta.perf).mean()
 
-    summary = pd.DataFrame(rows).set_index("selector")
-    summary.to_csv(out / "summary.csv", float_format="%.4f")
-    pd.DataFrame(per_task).to_csv(out / "per_task_regret1.csv", float_format="%.4f")
-    pd.DataFrame(curves).rename_axis("n_evaluated").to_csv(out / "regret_curve.csv", float_format="%.4f")
-    if gains:
-        gain = pd.concat(gains, axis=1).mean(axis=1)
-        gain.sort_values(ascending=False).rename("gain").to_csv(out / "feature_gain.csv", index_label="feature")
-    return summary
+def flaml_row(meta: MetaData, path: Path, cfg: Config) -> dict | None:
+    """Summary row for the FLAML baseline, if ``metapilot flaml`` has been run.
+    Regret is against the best portfolio pipeline and can be negative."""
+    if not path.exists():
+        return None
+    f = pd.read_csv(path, index_col="task_id")
+    f = f[f["accuracy"].notna() & f.index.isin(meta.perf.index)]
+    if f.empty:
+        return None
+    regret = 100 * (meta.perf.loc[f.index].max(axis=1) - f["accuracy"])
+    lo, hi = metrics.bootstrap_ci(regret, cfg.bootstrap, cfg.seed)
+    budget = f["budget_per_fold"].iloc[0]
+    return {"selector": f"FLAML ({budget:g}s/fold)", "regret@1": regret.mean(), "regret@1_lo": lo, "regret@1_hi": hi,
+            "top1_hit": 100 * float((regret <= cfg.hit_tolerance + 1e-9).mean()), "n_tasks": len(f),
+            "cost@1_s": f["seconds"].mean()}
 
 
 def _slug(name: str) -> str:
@@ -90,11 +142,21 @@ def _slug(name: str) -> str:
 
 
 def format_summary(summary: pd.DataFrame) -> str:
-    lines = [f"{'Selector':<22} {'Regret@1 (95% CI)':<22} {'Regret@3 (95% CI)':<22} {'Top-1 hit':>9} {'Spearman':>9}"]
+    def ci(r, m):
+        if pd.isna(r.get(m)):
+            return f"{'-':<22}"
+        return f"{r[m]:5.2f} ({r[m + '_lo']:.2f} to {r[m + '_hi']:.2f})".ljust(22)
+
+    def num(v, fmt):
+        return format(v, fmt) if pd.notna(v) else "-"
+
+    has_cost = "cost@3_s" in summary
+    lines = [f"{'Selector':<24} {'Regret@1 (95% CI)':<22} {'Regret@3 (95% CI)':<22} {'Top-1 hit':>9} {'Spearman':>9}"
+             + (f" {'Cost@1 s':>9} {'Cost@3 s':>9}" if has_cost else "")]
     for name, r in summary.iterrows():
-        lines.append(
-            f"{name:<22} {r['regret@1']:5.2f} ({r['regret@1_lo']:.2f} to {r['regret@1_hi']:.2f})  "
-            f"{r['regret@3']:5.2f} ({r['regret@3_lo']:.2f} to {r['regret@3_hi']:.2f})  "
-            f"{r['top1_hit']:8.1f}% {r['spearman']:9.2f}"
-        )
+        line = (f"{name:<24} {ci(r, 'regret@1')} {ci(r, 'regret@3')} {num(r['top1_hit'], '8.1f')}% "
+                f"{num(r.get('spearman'), '9.2f'):>9}")
+        if has_cost:
+            line += f" {num(r.get('cost@1_s'), '9.2f'):>9} {num(r.get('cost@3_s'), '9.2f'):>9}"
+        lines.append(line)
     return "\n".join(lines)

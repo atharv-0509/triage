@@ -29,6 +29,7 @@ GROUPS: dict[str, list[str]] = {
     "landmarkers": ["lm_stump", "lm_1nn", "lm_gnb", "lm_lda"],
 }
 FEATURES: list[str] = [f for g in GROUPS.values() for f in g]
+MAX_CORR_COLS = 500
 
 
 def extract(X: pd.DataFrame, y: np.ndarray, landmarker_rows: int = 200, seed: int = 0) -> dict[str, float]:
@@ -50,7 +51,11 @@ def extract(X: pd.DataFrame, y: np.ndarray, landmarker_rows: int = 200, seed: in
     with warnings.catch_warnings(), np.errstate(all="ignore"):
         warnings.simplefilter("ignore")
         if Xv.shape[1] >= 2:
-            corr = np.corrcoef(Xv, rowvar=False)
+            # On very wide data (e.g. arcene, 10k columns) the full correlation
+            # matrix is too large; estimate the mean from a random column subset.
+            cols = np.random.default_rng(seed).choice(Xv.shape[1], size=min(Xv.shape[1], MAX_CORR_COLS),
+                                                      replace=False)
+            corr = np.corrcoef(Xv[:, np.sort(cols)], rowvar=False)
             iu = np.triu_indices_from(corr, k=1)
             mf["mean_abs_corr"] = float(np.nanmean(np.abs(corr[iu])))
         else:

@@ -11,16 +11,21 @@ written to ``out_dir``:
 * ``portfolio.csv``    - pipeline name and family
 * ``text_meta.jsonl``  - column names, dtypes and description per task
 * ``config.yaml``      - the config used
+* ``parts/``           - one JSON checkpoint per task (used to resume and to
+                         combine shards run on different machines)
 """
 
 from __future__ import annotations
 
+import hashlib
 import json
 import logging
+import re
 import signal
 import threading
 import time
 import warnings
+import zlib
 from contextlib import contextmanager
 from pathlib import Path
 
@@ -35,7 +40,7 @@ from .augment import Task, make_tasks
 from .config import Config
 from .portfolio import build_pipeline, get_portfolio
 from .preprocess import split_columns
-from .sources import load_sources
+from .sources import Dataset, load_sources
 
 log = logging.getLogger(__name__)
 
@@ -138,7 +143,14 @@ def text_meta(task: Task) -> dict:
     }
 
 
-def build(cfg: Config, out_dir: str | Path) -> Path:
+def build(cfg: Config, out_dir: str | Path, shard: tuple[int, int] = (0, 1)) -> Path:
+    """Evaluate every task of this shard, one checkpoint file per task.
+
+    Re-running skips tasks that already have a result, so an interrupted build
+    resumes where it stopped. With ``shard=(i, n)`` only tasks whose id hashes
+    to ``i`` are run; each group member runs one shard and :func:`assemble`
+    combines the ``parts/`` folders afterwards.
+    """
     out = Path(out_dir)
     out.mkdir(parents=True, exist_ok=True)
     (out / "config.yaml").write_text(yaml.safe_dump(cfg.to_dict(), sort_keys=False))
@@ -147,30 +159,147 @@ def build(cfg: Config, out_dir: str | Path) -> Path:
     pd.DataFrame([{"pipeline": s.name, "family": s.family, "scaled": s.scale} for s in portfolio]) \
         .to_csv(out / "portfolio.csv", index=False)
 
-    parents = load_sources(cfg)
-    rng = np.random.default_rng(cfg.seed)
+    tasks = generate_tasks(cfg)
+    log.info("%d tasks x %d pipelines x %d CV folds = %d model fits",
+             len(tasks), len(portfolio), cfg.cv_folds, len(tasks) * len(portfolio) * cfg.cv_folds)
+
+    mine = [t for t in tasks if in_shard(t.task_id, shard)]
+    parts = out / "parts"
+    parts.mkdir(exist_ok=True)
+    key = config_key(cfg)
+    todo = [t for t in mine if not _part_done(parts / part_name(t.task_id), key)]
+    log.info("shard %d/%d: %d tasks, %d already done, %d to run", shard[0], shard[1], len(mine),
+             len(mine) - len(todo), len(todo))
+
+    t0 = time.perf_counter()
+    Parallel(n_jobs=cfg.n_jobs, verbose=5)(delayed(_evaluate_and_save)(t, cfg, parts, key) for t in todo)
+    log.info("portfolio evaluation took %.1f s", time.perf_counter() - t0)
+
+    if shard == (0, 1):
+        assemble(out, cfg, expected=[t.task_id for t in tasks])
+    else:
+        log.info("shard finished; copy %s from every machine into one directory and run `metapilot assemble`", parts)
+    return out
+
+
+# --------------------------------------------------------------------------- #
+# Task generation, sharding and checkpointing
+# --------------------------------------------------------------------------- #
+
+def generate_tasks(cfg: Config) -> list[Task]:
+    """Load all parents and augment them into tasks.
+
+    Each parent gets its own RNG derived from its name, so the task list is
+    identical on every machine even if a different set of parents loads.
+    """
+    parents = dedupe_parents(load_sources(cfg))
     tasks: list[Task] = []
     for p in parents:
         try:
-            tasks.extend(make_tasks(p, cfg, rng))
+            tasks.extend(make_tasks(p, cfg, np.random.default_rng([cfg.seed, _stable_hash(p.name)])))
         except Exception as e:  # noqa: BLE001
             log.warning("parent %s skipped: %s", p.name, e)
-    log.info("%d parents -> %d tasks, %d pipelines, %d CV folds = %d model fits",
-             len(parents), len(tasks), len(portfolio), cfg.cv_folds, len(tasks) * len(portfolio) * cfg.cv_folds)
+    log.info("%d parents -> %d tasks", len(parents), len(tasks))
+    return tasks
 
-    t0 = time.perf_counter()
-    results = Parallel(n_jobs=cfg.n_jobs, verbose=5)(delayed(evaluate_task)(t, cfg) for t in tasks)
-    log.info("portfolio evaluation took %.1f s", time.perf_counter() - t0)
 
-    ids = [r["task"]["task_id"] for r in results]
+def dedupe_parents(parents: list[Dataset]) -> list[Dataset]:
+    """Drop parents that look like copies of an earlier one (same shape and
+    class counts). Copies in different outer folds would leak across the split."""
+    seen: dict[tuple, str] = {}
+    out = []
+    for p in parents:
+        fp = (p.X.shape, tuple(sorted(pd.Series(np.asarray(p.y)).value_counts().tolist())))
+        if fp in seen:
+            log.warning("parent %s looks like a duplicate of %s; skipped", p.name, seen[fp])
+            continue
+        seen[fp] = p.name
+        out.append(p)
+    return out
+
+
+def _stable_hash(s: str) -> int:
+    return zlib.crc32(s.encode("utf-8"))
+
+
+def in_shard(task_id: str, shard: tuple[int, int]) -> bool:
+    i, n = shard
+    return _stable_hash(task_id) % n == i
+
+
+def parse_shard(text: str) -> tuple[int, int]:
+    """``"2/4"`` -> ``(2, 4)``; shards are numbered from 0."""
+    i, n = (int(v) for v in text.split("/"))
+    if not 0 <= i < n:
+        raise ValueError(f"shard index must be in 0..{n - 1}, got {text}")
+    return i, n
+
+
+def part_name(task_id: str) -> str:
+    return re.sub(r"[^A-Za-z0-9_.-]", "_", task_id) + ".json"
+
+
+def config_key(cfg: Config) -> str:
+    """Hash of every setting that changes a task's result. Parts written with
+    a different key are recomputed (build) or rejected (assemble)."""
+    fields = ("seed", "max_rows", "subsamples_per_parent", "row_frac", "col_frac", "min_class_count",
+              "high_cardinality", "landmarker_rows", "portfolio", "cv_folds", "fit_timeout")
+    d = cfg.to_dict()
+    return hashlib.sha1(json.dumps({f: d[f] for f in fields}, sort_keys=True).encode()).hexdigest()[:12]
+
+
+def _part_done(path: Path, key: str) -> bool:
+    if not path.exists():
+        return False
+    try:
+        return json.loads(path.read_text()).get("config_key") == key
+    except json.JSONDecodeError:
+        return False  # a partially written file from an interrupted run
+
+
+def _evaluate_and_save(task: Task, cfg: Config, parts: Path, key: str) -> None:
+    result = evaluate_task(task, cfg)
+    result["config_key"] = key
+    path = parts / part_name(task.task_id)
+    tmp = path.with_suffix(".tmp")
+    tmp.write_text(json.dumps(result, default=_json_default))
+    tmp.replace(path)  # atomic, so an interrupted run never leaves half a result
+
+
+def _json_default(v):
+    if isinstance(v, (np.floating, np.integer)):
+        return v.item()
+    raise TypeError(type(v))
+
+
+def assemble(out_dir: str | Path, cfg: Config | None = None, expected: list[str] | None = None) -> Path:
+    """Combine ``out_dir/parts/*.json`` into the meta-dataset CSVs."""
+    out = Path(out_dir)
+    if cfg is None:
+        cfg = Config.load(out / "config.yaml")
+    key = config_key(cfg)
+    results = []
+    for path in sorted((out / "parts").glob("*.json")):
+        r = json.loads(path.read_text())
+        if r.get("config_key") != key:
+            raise ValueError(f"{path.name} was built with a different config ({r.get('config_key')} != {key})")
+        results.append(r)
+    if not results:
+        raise ValueError(f"no results in {out / 'parts'}")
+    if expected is not None:
+        missing = set(expected) - {r["task"]["task_id"] for r in results}
+        if missing:
+            log.warning("%d expected tasks have no result yet, e.g. %s", len(missing), sorted(missing)[:3])
+
+    names = [s.name for s in get_portfolio(cfg.portfolio)]
+    ids = pd.Index([r["task"]["task_id"] for r in results], name="task_id")
     pd.DataFrame([r["task"] for r in results]).to_csv(out / "tasks.csv", index=False)
-    pd.DataFrame([r["mf"] for r in results], index=pd.Index(ids, name="task_id")).to_csv(out / "metafeatures.csv")
-    names = [s.name for s in portfolio]
-    pd.DataFrame([r["acc"] for r in results], index=pd.Index(ids, name="task_id"))[names] \
-        .to_csv(out / "performance.csv")
-    pd.DataFrame([r["secs"] for r in results], index=pd.Index(ids, name="task_id"))[names] \
-        .to_csv(out / "fit_seconds.csv")
+    pd.DataFrame([r["mf"] for r in results], index=ids).to_csv(out / "metafeatures.csv")
+    pd.DataFrame([r["acc"] for r in results], index=ids)[names].to_csv(out / "performance.csv")
+    pd.DataFrame([r["secs"] for r in results], index=ids)[names].to_csv(out / "fit_seconds.csv")
     with open(out / "text_meta.jsonl", "w") as f:
         for r in results:
             f.write(json.dumps(r["text"]) + "\n")
+    log.info("assembled %d tasks from %d parents into %s", len(results),
+             len({r["task"]["parent"] for r in results}), out)
     return out
