@@ -18,7 +18,6 @@ import pandas as pd
 from sklearn.base import BaseEstimator, TransformerMixin
 from sklearn.compose import ColumnTransformer
 from sklearn.impute import SimpleImputer
-from sklearn.model_selection import train_test_split
 from sklearn.pipeline import Pipeline
 from sklearn.preprocessing import OneHotEncoder, StandardScaler
 
@@ -47,13 +46,20 @@ def clean_dataset(X: pd.DataFrame, y, max_rows: int | None, seed: int) -> tuple[
 
 def stratified_cap(X: pd.DataFrame, y: np.ndarray, max_rows: int | None, seed: int):
     """Reduce to ``max_rows`` rows by stratified random sampling."""
+    y = np.asarray(y)
     if max_rows is None or len(X) <= max_rows:
-        return X.reset_index(drop=True), np.asarray(y)
-    counts = np.bincount(y)
-    stratify = y if counts[counts > 0].min() >= 2 else None
-    X_s, _, y_s, _ = train_test_split(X, y, train_size=max_rows, stratify=stratify, random_state=seed)
-    order = np.argsort(X_s.index.to_numpy())
-    return X_s.iloc[order].reset_index(drop=True), np.asarray(y_s)[order]
+        return X.reset_index(drop=True), y
+    # Proportional allocation per class (largest remainder), then sample within
+    # each class. Unlike train_test_split this works for any sizes, e.g. 201 -> 200 rows.
+    classes, counts = np.unique(y, return_counts=True)
+    quota = counts * max_rows / len(y)
+    take = np.floor(quota).astype(int)
+    for i in np.argsort(-(quota - take), kind="stable")[: max_rows - take.sum()]:
+        take[i] += 1
+    rng = np.random.default_rng(seed)
+    rows = np.sort(np.concatenate([rng.choice(np.flatnonzero(y == c), size=k, replace=False)
+                                   for c, k in zip(classes, take)]))
+    return X.iloc[rows].reset_index(drop=True), y[rows]
 
 
 def split_columns(X: pd.DataFrame, high_cardinality: int) -> tuple[list[str], list[str], list[str]]:

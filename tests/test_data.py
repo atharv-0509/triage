@@ -64,3 +64,15 @@ def test_metafeatures_complete_and_finite():
     assert list(mf) == metafeatures.FEATURES and len(mf) == 14
     assert all(np.isfinite(v) for v in mf.values())
     assert 0 <= mf["minority_majority_ratio"] <= 1 and 0 < mf["pca_frac_95"] <= 1
+
+
+@pytest.mark.parametrize("n,cap", [(201, 200), (1000, 200), (37, 36), (500, 7)])
+def test_stratified_cap_any_size(n, cap):
+    from metapilot.preprocess import stratified_cap
+
+    y = np.arange(n) % 4
+    X = pd.DataFrame({"a": np.arange(n)})
+    Xs, ys = stratified_cap(X, y, cap, seed=0)
+    assert len(Xs) == len(ys) == cap
+    assert np.abs(np.bincount(ys, minlength=4) - cap / 4).max() <= 1  # proportional
+    assert (Xs["a"].to_numpy() % 4 == ys).all()  # rows and labels stay aligned

@@ -98,3 +98,17 @@ def test_flaml_runs_on_real_tasks(tmp_path):
     out = baselines.run(cfg, tmp_path, budget=1, max_tasks=2)
     res = pd.read_csv(out, index_col="task_id")
     assert len(res) == 2 and res["accuracy"].between(0, 1).all()
+
+
+def test_failing_task_does_not_stop_build(tmp_path, monkeypatch):
+    real = metadataset.evaluate_task
+
+    def flaky(task, cfg):
+        if task.task_id.endswith("__s0"):
+            raise RuntimeError("boom")
+        return real(task, cfg)
+
+    monkeypatch.setattr(metadataset, "evaluate_task", flaky)
+    out = metadataset.build(_cfg(), tmp_path / "meta")
+    perf = pd.read_csv(out / "performance.csv", index_col="task_id")
+    assert len(perf) == 4 and not perf.index.str.endswith("__s0").any()

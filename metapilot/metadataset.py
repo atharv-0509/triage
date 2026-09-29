@@ -44,6 +44,10 @@ from .sources import Dataset, load_sources
 
 log = logging.getLogger(__name__)
 
+# Bump when a code change alters task results (sampling, meta-features,
+# pipelines), so parts computed by older code are recomputed or rejected.
+RESULTS_VERSION = 2
+
 
 class FitTimeout(Exception):
     pass
@@ -245,7 +249,8 @@ def config_key(cfg: Config) -> str:
     fields = ("seed", "max_rows", "subsamples_per_parent", "row_frac", "col_frac", "min_class_count",
               "high_cardinality", "landmarker_rows", "portfolio", "cv_folds", "fit_timeout")
     d = cfg.to_dict()
-    return hashlib.sha1(json.dumps({f: d[f] for f in fields}, sort_keys=True).encode()).hexdigest()[:12]
+    payload = {f: d[f] for f in fields} | {"results_version": RESULTS_VERSION}
+    return hashlib.sha1(json.dumps(payload, sort_keys=True).encode()).hexdigest()[:12]
 
 
 def _part_done(path: Path, key: str) -> bool:
@@ -258,7 +263,11 @@ def _part_done(path: Path, key: str) -> bool:
 
 
 def _evaluate_and_save(task: Task, cfg: Config, parts: Path, key: str) -> None:
-    result = evaluate_task(task, cfg)
+    try:
+        result = evaluate_task(task, cfg)
+    except Exception:  # noqa: BLE001 - one bad task must not stop a long build; it is retried next run
+        log.exception("task %s failed; it will be retried on the next build", task.task_id)
+        return
     result["config_key"] = key
     path = parts / part_name(task.task_id)
     tmp = path.with_suffix(".tmp")
