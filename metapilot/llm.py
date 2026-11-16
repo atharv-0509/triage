@@ -21,6 +21,7 @@ from __future__ import annotations
 
 import json
 import re
+import zlib
 from pathlib import Path
 
 import numpy as np
@@ -95,10 +96,26 @@ def target_ranking(perf_row: pd.Series) -> list[str]:
     return [perf_row.index[i] for i in order]
 
 
-def write_prompts(meta_dir: str | Path, cfg: Config, out: str | Path | None = None) -> Path:
+def candidate_order(pipelines: list[str], task_id: str, seed: int, shuffle: bool) -> list[str]:
+    """The order in which a task's prompt lists the candidates.
+
+    Fixed portfolio order by default. With ``shuffle`` every task gets its own
+    random order (stable: derived from the task id and seed), so a model cannot
+    learn to echo the listed order and must take the ranking from the profile.
+    The target ranking is unaffected.
+    """
+    if not shuffle:
+        return list(pipelines)
+    rng = np.random.default_rng([seed, zlib.crc32(task_id.encode("utf-8"))])
+    return [pipelines[i] for i in rng.permutation(len(pipelines))]
+
+
+def write_prompts(meta_dir: str | Path, cfg: Config, out: str | Path | None = None,
+                  shuffle_candidates: bool = False) -> Path:
     """Write ``<meta_dir>/llm/prompts.jsonl``: one record per task with both
     prompts, the target ranking and the task's outer fold (``folds.csv``, the
-    split every method shares)."""
+    split every method shares). Prompts A and B of a task list the candidates
+    in the same order."""
     meta = MetaData.load(meta_dir)
     folds = make_folds(meta, cfg.outer_folds, cfg.seed, folds_path(meta_dir, cfg.seed, cfg.seed))
     text = {}
@@ -114,15 +131,17 @@ def write_prompts(meta_dir: str | Path, cfg: Config, out: str | Path | None = No
         for task_id in meta.perf.index:
             task = meta.tasks.loc[task_id].to_dict()
             mf = meta.mf.loc[task_id].to_dict()
+            cands = candidate_order(pipelines, task_id, cfg.seed, shuffle_candidates)
             f.write(json.dumps({
                 "task_id": task_id,
                 "parent": task["parent"],
                 "source": task["source"],
                 "fold": int(folds.loc[task_id]),
                 "system": SYSTEM_PROMPT,
-                "numeric": numeric_prompt(task, mf, pipelines),
-                "semantic": semantic_prompt(task, mf, pipelines, text.get(task_id, {})),
+                "numeric": numeric_prompt(task, mf, cands),
+                "semantic": semantic_prompt(task, mf, cands, text.get(task_id, {})),
                 "target": ", ".join(target_ranking(meta.perf.loc[task_id])),
+                "candidates_shuffled": shuffle_candidates,
             }) + "\n")
     return out
 

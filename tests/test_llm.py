@@ -133,3 +133,42 @@ def test_adapters_float32_for_fp16_training():
     adapter_dtype_for_mixed_precision(model, bf16=False)
     assert model[1].weight.dtype == torch.float32 and model[1].bias.dtype == torch.float32
     assert model[0].weight.dtype == torch.bfloat16  # frozen weights untouched
+
+
+def _candidates_line(prompt):
+    return prompt.split("Candidate pipelines: ")[1].split("\n")[0].split(", ")
+
+
+def test_shuffled_candidates(tiny_meta, tiny_cfg, tmp_path):
+    d = tmp_path / "meta"
+    shutil.copytree(tiny_meta, d, ignore=shutil.ignore_patterns("parts", "llm", "folds*.csv"))
+    plain = llm.load_jsonl(llm.write_prompts(d, tiny_cfg, d / "plain.jsonl"))
+    shuf = llm.load_jsonl(llm.write_prompts(d, tiny_cfg, d / "shuf.jsonl", shuffle_candidates=True))
+    again = llm.load_jsonl(llm.write_prompts(d, tiny_cfg, d / "again.jsonl", shuffle_candidates=True))
+    pipes = MetaData.load(d).pipelines
+    orders = []
+    for p, s, a in zip(plain, shuf, again):
+        assert _candidates_line(p["numeric"]) == pipes and not p["candidates_shuffled"]
+        order = _candidates_line(s["numeric"])
+        assert sorted(order) == sorted(pipes) and s["candidates_shuffled"]
+        assert order == _candidates_line(s["semantic"])          # same order in A and B
+        assert order == _candidates_line(a["numeric"])           # deterministic
+        assert s["target"] == p["target"] and s["fold"] == p["fold"]
+        orders.append(tuple(order))
+    assert len(set(orders)) == len(orders)  # every task gets its own order
+
+
+def test_adapter_and_prompts_must_agree_on_shuffling(tmp_path):
+    from metapilot import llm_train
+
+    rows = [{"task_id": "t1", "fold": 0, "target": "a, b", "candidates_shuffled": True}]
+    prompts = tmp_path / "p.jsonl"
+    prompts.write_text("".join(json.dumps(r) + "\n" for r in rows))
+    adapter = tmp_path / "ad"
+    adapter.mkdir()
+    (adapter / "train_info.json").write_text(json.dumps(
+        {"fold": 0, "kind": "numeric", "train_task_ids": [], "candidates_shuffled": False}))
+    with pytest.raises(ValueError, match="candidates_shuffled"):
+        llm_train.predict(prompts, "numeric", tmp_path / "o.jsonl", "unused", adapter, fold=0)
+    with pytest.raises(ValueError, match="mixes"):
+        llm_train.prompts_shuffled(rows + [{**rows[0], "candidates_shuffled": False}])

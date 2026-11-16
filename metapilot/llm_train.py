@@ -72,6 +72,13 @@ def _load_model(model_id: str, load_in_4bit: bool | None):
     return model, tok, load_in_4bit
 
 
+def prompts_shuffled(rows: list[dict]) -> bool:
+    flags = {bool(r.get("candidates_shuffled", False)) for r in rows}
+    if len(flags) > 1:
+        raise ValueError("prompts file mixes shuffled and unshuffled candidate orders")
+    return flags.pop()
+
+
 def adapter_dtype_for_mixed_precision(model, bf16: bool) -> None:
     """Keep trainable (LoRA) weights in float32 unless training in bf16.
 
@@ -107,6 +114,7 @@ def train(prompts_path: str | Path, fold: int, kind: str, out_dir: str | Path, m
     if not train_rows or len(train_rows) == len(rows):
         raise ValueError(f"fold {fold} does not split the prompts into train and test")
     assert all(int(r["fold"]) != fold for r in train_rows)  # no test task in training
+    shuffled = prompts_shuffled(rows)
 
     # Prompt-completion format: the loss is computed on the ranking only.
     ds = Dataset.from_list([{
@@ -137,6 +145,7 @@ def train(prompts_path: str | Path, fold: int, kind: str, out_dir: str | Path, m
         "base_model": model_id, "fold": fold, "kind": kind, "n_train_tasks": len(train_rows),
         "train_task_ids": [r["task_id"] for r in train_rows], "epochs": epochs, "max_steps": max_steps,
         "learning_rate": learning_rate, "lora_r": lora_r, "lora_alpha": lora_alpha, "load_in_4bit": four_bit,
+        "candidates_shuffled": shuffled,
         "train_loss": result.training_loss,
     }, indent=2))
     log.info("fold %d %s: trained on %d tasks, loss %.4f -> %s", fold, kind, len(train_rows), result.training_loss, out)
@@ -163,6 +172,10 @@ def predict(prompts_path: str | Path, kind: str, out_path: str | Path, model_id:
         if fold is None or int(info["fold"]) != fold or info["kind"] != kind:
             raise ValueError(f"adapter {adapter} was trained for fold {info['fold']} ({info['kind']}); "
                              f"predict with --fold {info['fold']} --kind {info['kind']}")
+        if info.get("candidates_shuffled", False) != prompts_shuffled(rows):
+            raise ValueError(f"adapter {adapter} was trained on prompts with candidates_shuffled="
+                             f"{info.get('candidates_shuffled', False)}, but these prompts have "
+                             f"{prompts_shuffled(rows)}; write the prompts the same way")
         overlap = {r["task_id"] for r in rows if int(r["fold"]) == fold} & set(info["train_task_ids"])
         if overlap:
             raise ValueError(f"{len(overlap)} test tasks were in this adapter's training data")

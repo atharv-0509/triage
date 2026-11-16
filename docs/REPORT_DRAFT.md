@@ -173,8 +173,11 @@ What the pilot shows:
 
 ### 5.2 Full study
 
-To do: the same notebook with `META = "metadata/full"`. There are about 10 times more training tasks per fold,
-which may or may not prevent the collapse; the diversity columns will show it.
+To do: the same notebook with `META = "metadata/full"`. Two things change at once compared with the pilot. There
+are about 10 times more training tasks per fold, and the candidates are listed in a different random order for
+each task (`SHUFFLE_CANDIDATES = True`), so the model cannot echo the prompt's order. The diversity columns show
+whether the collapse goes away, but not which of the two changes caused it. Separating them needs a second
+full-scale run with `SHUFFLE_CANDIDATES = False`, which costs about the same GPU time again.
 
 ## 6. Answers to the research questions
 

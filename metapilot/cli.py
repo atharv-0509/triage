@@ -62,6 +62,8 @@ def main(argv: list[str] | None = None) -> None:
     q = sub.add_parser("prompts", help="write Phase 2 LLM prompts (<meta>/llm/prompts.jsonl)")
     q.add_argument("--config", type=Path)
     q.add_argument("--meta", type=Path, required=True)
+    q.add_argument("--shuffle-candidates", action="store_true",
+                   help="list the candidates in a different random order for each task")
 
     t = sub.add_parser("llm-train", help="QLoRA fine-tune on the training folds of one outer fold (GPU)")
     t.add_argument("--prompts", type=Path, required=True)
@@ -121,7 +123,7 @@ def main(argv: list[str] | None = None) -> None:
     elif args.cmd == "prompts":
         from . import llm
 
-        print(llm.write_prompts(args.meta, Config.load(args.config)))
+        print(llm.write_prompts(args.meta, Config.load(args.config), shuffle_candidates=args.shuffle_candidates))
     elif args.cmd == "llm-train":
         from . import llm_train
 

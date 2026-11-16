@@ -126,7 +126,13 @@ done                                   # and the same with --kind semantic -> ft
 python -m metapilot evaluate --config configs/pilot.yaml --meta data/pilot --out runs/pilot
 ```
 
-(`P` is `data/pilot/llm/prompts.jsonl`.) Each adapter trains only on tasks outside its fold and refuses to predict
+(`P` is `data/pilot/llm/prompts.jsonl`.) With `metapilot prompts --shuffle-candidates`, every task lists the
+candidates in its own random order (stable per task, and the same in Prompts A and B), so a model cannot learn to
+echo the listed order. The setting is stored in each prompt record and in each adapter's `train_info.json`, and
+`llm-predict` refuses to mix the two. The notebook turns it on with `SHUFFLE_CANDIDATES = True` (the default since
+the pilot run) and keeps shuffled runs apart: Drive folder `<RUN_NAME>_shuf`, predictions `ft_numeric_shuf`, and
+so on. Shuffling removes one shortcut; it does not by itself make the model use the profile. Check
+`distinct_rankings` in the results. Each adapter trains only on tasks outside its fold and refuses to predict
 any other fold. `evaluate` adds one `LLM: <variant>` row per predictions file. A model's output is matched to
 pipeline names exactly; pipelines it leaves out are filled in from the training folds' single-best order so the
 ranking is complete. Because a model that names nothing would then score exactly like single best, every LLM row
