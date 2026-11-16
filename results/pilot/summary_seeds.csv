@@ -1,0 +1,6 @@
+selector,regret@1_mean,regret@1_std,regret@3_mean,regret@3_std,top1_hit_mean,top1_hit_std,spearman_mean,spearman_std
+Random,4.9808,0.3943,2.0903,0.1026,17.3333,3.4055,-0.0106,0.0263
+Single best,2.7781,0.3259,1.5314,0.1413,27.5000,2.3570,0.3564,0.0042
+kNN meta-learner,3.4403,0.3170,1.4871,0.1142,22.6667,1.8066,0.3606,0.0120
+LightGBM regressor,3.0255,0.2915,1.3483,0.0793,25.8333,2.8260,0.3950,0.0143
+LightGBM LambdaRank,3.4835,0.2240,1.4988,0.1239,22.3333,2.9107,0.3440,0.0193

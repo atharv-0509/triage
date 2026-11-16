@@ -166,7 +166,8 @@ accuracies.
 ## Results so far
 
 Snapshots of the result tables and figures are kept in `results/`. Regret is measured in accuracy points (lower is
-better), using 5-fold grouped outer CV.
+better), using 5-fold grouped outer CV. The full OpenML study is running in a separate session and will be added
+here when it finishes.
 
 ### Scale test: full-study settings on local sources (`configs/local_full.yaml`)
 
@@ -179,42 +180,49 @@ the shared `folds.csv` split. The ± values are the mean and standard deviation 
 | Random | 6.88 (6.23–7.62) | 3.05 (2.71–3.40) | 13.3% | 0.00 | 7.20 ± 0.45 | 3.02 ± 0.10 |
 | Single best | 2.94 (2.66–3.21) | 2.24 (1.99–2.49) | 25.2% | 0.36 | 2.94 ± 0.00 | 2.24 ± 0.00 |
 | kNN meta-learner | 3.15 (2.85–3.48) | 1.92 (1.70–2.15) | 23.9% | 0.47 | 3.21 ± 0.15 | 1.93 ± 0.07 |
-| LightGBM regressor | 2.91 (2.62–3.20) | 1.90 (1.66–2.14) | 26.9% | 0.48 | 3.02 ± 0.11 | 1.96 ± 0.05 |
-| LightGBM LambdaRank | **2.76** (2.49–3.06) | **1.57** (1.38–1.78) | 25.6% | 0.44 | **2.72 ± 0.08** | **1.58 ± 0.04** |
+| LightGBM regressor | 3.08 (2.78–3.40) | 1.94 (1.71–2.17) | 24.8% | 0.48 | 3.05 ± 0.10 | 1.98 ± 0.04 |
+| LightGBM LambdaRank | **2.72** (2.46–2.99) | **1.53** (1.35–1.74) | 26.3% | 0.44 | **2.77 ± 0.10** | **1.57 ± 0.04** |
 
 What changed compared with the 120-task pilot:
 
-* **LambdaRank now performs best.** In the pilot it was the weakest meta-model, and the report put this down to too
-  few training tasks. With about 430 training tasks per fold it has the lowest regret at both cutoffs.
-* **The meta-models now clearly beat single best at Regret@3** (1.57–1.92 against 2.24), where in the pilot they
-  did not. At Regret@1 the gain is small (2.72 against 2.94 averaged over seeds) and the CIs overlap.
-* **Landmarker ablation.** Removing the landmarkers makes every meta-model worse: LambdaRank goes from 2.76 to 3.16
-  at Regret@1 and from 1.57 to 1.73 at Regret@3, and kNN goes from 3.15 to 3.61. Landmarkers carry 56% of the
-  LightGBM gain (`summary_no_landmarkers.csv`).
+* **LambdaRank now performs best.** In the pilot it was the weakest and least stable meta-model, and the report
+  put this down to too few training tasks. With about 430 training tasks per fold it has the lowest regret at both
+  cutoffs.
+* **The meta-models beat single best at Regret@3** (1.53–1.94 against 2.24). Only LambdaRank's CI (1.35–1.74)
+  clears single best's (1.99–2.49). At Regret@1 the gain is small (2.77 against 2.94 averaged over seeds), and the
+  CIs overlap.
+* **Landmarker ablation** (`summary_no_landmarkers.csv`). Without the landmarkers kNN gets clearly worse (3.15 →
+  3.61 at Regret@1, 1.92 → 2.21 at Regret@3). LambdaRank changes only a little (2.72 → 2.85 and 1.53 → 1.62), well
+  inside its CIs. Landmarkers still carry 56% of the LightGBM regressor's gain.
 * **No single family dominates.** The most frequent winners are extra trees (17%), MLP (15%) and SVM (15%).
-* **FLAML** (5 s per fold, 60 evenly spread tasks, about 15 s per task) has a Regret@1 of 5.75 (4.41–7.16). On the
-  same 60 tasks LambdaRank scores 2.46 at Regret@1 and 1.65 at Regret@3, using about 1.8 s to run its top 3. There
-  are two caveats. FLAML's search space has no SVM, kNN or MLP, which often win on this synthetic-heavy pool. And
-  regret against the best of 38 cross-validated scores is optimistic about the oracle, which penalises any single
-  method.
+* **FLAML** (5 s per fold, 60 evenly spread tasks, about 15 s per task) has a Regret@1 of 5.78 (4.43–7.16). On the
+  same 60 tasks LambdaRank scores 2.71 at Regret@1 and 1.41 at Regret@3, using about 3 s to run its top 3. There are
+  two caveats. FLAML's search space has no SVM, kNN or MLP, which often win on this synthetic-heavy pool. And regret
+  against the best of 38 cross-validated scores is optimistic about the oracle, which penalises any single method.
+
+**On real tasks only** (`summary_real.csv`: 40 tasks from the 4 scikit-learn parents), single best (Regret@1 1.27)
+and the LightGBM regressor (1.29) are level, and LambdaRank is lowest at Regret@3 (0.81 against 1.04). With 4
+parents this subset is far too small to conclude anything.
 
 About 85% of these parents are synthetic, so treat this run as a test that the full-scale pipeline works and as a
-first sign of trends. It is not a finding about real data yet. The OpenML build is what will settle it.
+first sign of trends. It is not a finding about real data yet.
 
 ### Pilot (`configs/pilot.yaml`)
 
 This run uses 30 parents and 120 tasks, with 18 pipelines and 3-fold CV (6,480 fits).
 
-| Selector | Regret@1 (95% CI) | Regret@3 (95% CI) | Top-1 hit | Spearman |
-|---|---|---|---|---|
-| Random | 5.28 (4.29–6.54) | 2.19 (1.72–2.72) | 13.3% | −0.05 |
-| Single best | 2.54 (2.07–3.06) | 1.72 (1.35–2.10) | 29.2% | 0.36 |
-| kNN meta-learner | 3.39 (2.69–4.23) | 1.48 (1.10–1.91) | 21.7% | 0.36 |
-| LightGBM regressor | 2.80 (2.28–3.40) | 1.33 (1.01–1.72) | 25.0% | 0.39 |
-| LightGBM LambdaRank | 2.93 (2.37–3.56) | 1.43 (1.06–1.86) | 24.2% | 0.34 |
+| Selector | Regret@1 (95% CI) | Regret@3 (95% CI) | Top-1 hit | Spearman | Regret@1 over 5 seeds |
+|---|---|---|---|---|---|
+| Random | 5.28 (4.29–6.54) | 2.19 (1.72–2.72) | 13.3% | −0.05 | 4.98 ± 0.39 |
+| Single best | 2.54 (2.07–3.06) | 1.72 (1.35–2.10) | 29.2% | 0.36 | 2.78 ± 0.33 |
+| kNN meta-learner | 3.39 (2.69–4.23) | 1.48 (1.10–1.91) | 21.7% | 0.36 | 3.44 ± 0.32 |
+| LightGBM regressor | 2.80 (2.28–3.40) | 1.33 (1.01–1.72) | 25.0% | 0.39 | 3.03 ± 0.29 |
+| LightGBM LambdaRank | 3.55 (2.67–4.63) | 1.43 (1.08–1.84) | 24.2% | 0.33 | 3.48 ± 0.22 |
 
 These pilot numbers differ from the Milestone 2 report because the synthetic parents are generated differently. At
-this size the CIs overlap too much to separate the selectors.
+this size the CIs overlap too much to separate the selectors, and LambdaRank is unstable. Its pilot Regret@1 moved
+between 2.93 and 3.55 from nothing more than 11 of 2,160 relevance labels flipping on float noise; that noise is
+fixed now (see the implementation notes).
 
 ## Implementation notes
 
@@ -224,6 +232,10 @@ this size the CIs overlap too much to separate the selectors.
 * **Failed fits.** A failing or timed-out fit is stored as blank in `performance.csv` and replaced by the task's
   lowest score at load time. The time limit uses `SIGALRM`, and fits running inside compiled code (for example
   libsvm) are also marked as timed out once they return late.
+* **Reproducible across library versions.** Meta-level CSV files are read with exact (`round_trip`) float
+  parsing, and LambdaRank's 0–10 relevance labels are rounded so that 1e-15 float noise cannot push a value across
+  a .5 boundary. Accuracies on small tasks are multiples of 1/n, so such boundaries are common. Before this fix,
+  moving from pandas 3.0 to 3.1 changed pilot LambdaRank results.
 * **Family win share.** When several families tie for the best accuracy on a task, the win is split between them.
 * **`pca_frac_95`** is the number of principal components needed for 95% of the variance, divided by the number of
   components (min(rows, columns)), computed on standardised features.
