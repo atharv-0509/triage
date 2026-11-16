@@ -40,7 +40,7 @@ python -m pytest
 
 The full study (`configs/full.yaml`) uses OpenML-CC18, the supplementary OpenML datasets, wine, iris, 40
 synthetic parents and 10 moons/circles parents. Each parent gets 10 subsamples, and the 38-pipeline portfolio is
-run on tasks capped at 2,000 rows. That comes to roughly 170,000 model fits. Timing the portfolio on 2,000-row
+run on tasks capped at 2,000 rows. That comes to 1,310 tasks and 149,340 model fits. Timing the portfolio on 2,000-row
 tasks gives 30–60 s for a typical task and a few minutes for wide ones, so budget **about 25–40 CPU-hours**.
 Split the work across group members:
 
@@ -110,7 +110,7 @@ free T4, on Colab or Kaggle (it detects which), or on any machine with a GPU.
 On either platform, check the coverage the notebook prints after the base model and after the first fine-tuned
 fold. If it is far below 100%, stop: the model is not producing rankings. By default the notebook builds the pilot
 meta-dataset itself. For the full OpenML study, set `CONFIG = "configs/full.yaml"`, `META = "metadata/full"` and
-`RUN_NAME = "full"` in the first cell once `metadata/full/` has been pushed. These are now the notebook's defaults,
+`RUN_NAME = "full"` in the first cell; `metadata/full/` (1,310 tasks, 12 MB) is in the repository. These are now the notebook's defaults,
 with `EPOCHS = 1` to keep the full run to roughly 5–6 hours on a T4 (an estimate from the pilot's timings); the
 pilot settings are given in a comment in that cell. The notebook was run end to end on CPU
 with a tiny stand-in model; it has not yet run on a T4 with Qwen.
@@ -198,8 +198,62 @@ accuracies.
 ## Results so far
 
 Snapshots of the result tables and figures are kept in `results/`. Regret is measured in accuracy points (lower is
-better), using 5-fold grouped outer CV. The full OpenML study is running in a separate session and will be added
-here when it finishes.
+better), using 5-fold grouped outer CV.
+
+### Full study (OpenML) (`configs/full.yaml`, `results/full/`)
+
+131 parents: all 72 OpenML-CC18 datasets, 7 of the 8 supplementary OpenML datasets (madelon is already in CC18),
+wine, iris, 40 synthetic and 10 moons/circles parents. Each parent gets 10 subsamples, which gives 1,310 tasks
+(810 of them from the 81 real parents). The 38-pipeline portfolio is run with 3-fold CV on tasks capped at 2,000
+rows, 149,340 fits in all, taking about 5 hours of wall time on 4 cores (about 20 CPU-hours). No task failed. 75 of the 49,780 task-pipeline cells
+(0.15%, mostly kNN and HistGradientBoosting on the widest tasks) did not finish and are filled as failures. The
+meta-dataset is exported to `metadata/full/` (12 MB) for Phase 2.
+
+The table uses the shared `folds.csv` split, with 95% bootstrap CIs. The ± columns are the mean and standard
+deviation over 5 outer-CV seeds.
+
+| Selector | Regret@1 (95% CI) | Regret@3 (95% CI) | Top-1 hit | Spearman | Regret@1 over 5 seeds | Regret@3 over 5 seeds |
+|---|---|---|---|---|---|---|
+| Random | 6.62 (6.15–7.07) | 2.69 (2.50–2.89) | 11.4% | 0.00 | 6.65 ± 0.51 | 2.62 ± 0.08 |
+| Single best | 2.64 (2.48–2.80) | 1.96 (1.82–2.09) | 26.5% | 0.45 | 2.64 ± 0.00 | 1.95 ± 0.01 |
+| kNN meta-learner | 2.87 (2.66–3.07) | 1.64 (1.51–1.76) | 26.4% | 0.50 | 3.11 ± 0.20 | 1.72 ± 0.12 |
+| LightGBM regressor | 2.57 (2.41–2.72) | 1.55 (1.44–1.67) | 26.8% | 0.52 | 2.64 ± 0.14 | 1.61 ± 0.09 |
+| LightGBM LambdaRank | **2.37** (2.22–2.53) | **1.23** (1.13–1.34) | 26.6% | 0.52 | **2.41 ± 0.07** | **1.28 ± 0.06** |
+| FLAML (5 s/fold, 300 tasks) | 4.49 (3.91–5.19) | – | 9.7% | – | – | – |
+
+How to read it:
+
+* **Regret@3 is where the meta-models clearly win.** All three beat single best (1.96), and their CIs do not
+  overlap with it. LambdaRank (1.23) is also clearly ahead of the regressor (1.55) and kNN (1.64). Running its top 3
+  costs about 6 s per task, against 4 s for single best's top 3.
+* **At Regret@1 the gain is small.** LambdaRank is lowest (2.37 against 2.64 for single best, and 2.41 against
+  2.64 over seeds), but the CIs overlap. A paired bootstrap that resamples parents (so the 10 subsamples of one
+  dataset move together) gives a difference of −0.26 points, 95% interval −0.56 to −0.01: only just significant.
+  The regressor (−0.07, −0.22 to +0.09) and kNN (+0.23, −0.16 to +0.66) are not distinguishable from single best,
+  and LambdaRank against the regressor is not significant either (−0.19, −0.44 to +0.03). Top-1 hit rates are all
+  about 26–27%, so no method picks the exact winner more often than single best; the gains come from better near
+  misses.
+* **Real tasks only** (`summary_real.csv`, 810 tasks from 81 parents, the subset research question 3 needs): the
+  same ordering. LambdaRank has Regret@1 2.06 (1.89–2.22) against 2.37 (2.18–2.56) for single best (paired
+  difference −0.32, −0.73 to +0.05, not significant), and Regret@3 0.95 (0.85–1.06) against 1.80 (1.64–1.97),
+  clearly better.
+* **No single family dominates.** Winners are spread over SVM-RBF (18%), extra trees (16%), gradient boosting
+  (16%), MLP (13%), random forest (12%) and logistic regression (11%).
+* **Landmarkers are not needed here** (`summary_no_landmarkers.csv`). Without them every meta-model is level or
+  slightly better: LambdaRank 2.27 / 1.20, the regressor 2.45 / 1.57, kNN 2.76 / 1.53 (Regret@1 / Regret@3), all
+  inside the CIs above. This differs from the local scale test, where kNN got clearly worse without them. The LDA
+  landmarker still has the second-highest gain in the regressor (`feature_gain.csv`), so its information seems to
+  be available from the other meta-features too.
+* **FLAML** (5 s per fold, 300 evenly spread tasks, about 16 s per task) has Regret@1 4.49 (3.91–5.19). On the same
+  300 tasks LambdaRank's Regret@1 is 2.43 (2.09–2.75) and single best's 2.53, and FLAML beats LambdaRank's first
+  pick on 30% of them. Caveats: the budget rule (`max(5, cost@3 / 3)`) gave FLAML about 16 s per task against
+  about 1.6 s for LambdaRank's top 1 and 6 s for its top 3, so FLAML had more compute, not less. FLAML's search
+  space has no SVM, kNN or MLP, which win about 35% of tasks here. It reported no best estimator on 2 of its 900
+  folds. And regret against the best of 38 cross-validated scores is optimistic about the oracle, which penalises
+  any single method.
+
+Compared with the local scale test, LambdaRank's lead holds up with real data in the pool, and the meta-models'
+Regret@3 advantage is larger. The Regret@1 advantage over single best stays small.
 
 ### Phase 2 pilot (`results/pilot_llm/`)
 
@@ -293,7 +347,8 @@ fixed now (see the implementation notes).
 - [x] Scale-up tooling: sharded and resumable build, full portfolio, 10 subsamples, duplicate check; tested at 540
       tasks on local sources
 - [x] FLAML baseline, landmarker ablation and multi-seed evaluation (implemented and run on the local scale test)
-- [ ] Full build on OpenML-CC18 plus supplementary datasets (~150 parents): running in a separate cloud session
+- [x] Full build on OpenML-CC18 plus supplementary datasets: 131 parents, 1,310 tasks (`results/full/`,
+      meta-dataset in `metadata/full/`)
 - [ ] TabPFN in the portfolio (`portfolio: full_tabpfn`)
 - [x] Phase 2 code: prompts A/B, per-fold QLoRA training, generation, scoring with coverage, Colab notebook
       (tested end to end with a tiny offline model)
