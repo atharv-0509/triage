@@ -52,3 +52,13 @@ def test_family_win_share_splits_ties():
     meta.perf.iloc[1] = [0.9, 0.5, 0.9]   # x and y tie
     share = family_win_share(meta)
     assert share["x"] == 0.75 and share["y"] == 0.25
+
+
+def test_relevance_labels_ignore_float_noise():
+    # 0.75 scaled to 7.5 must give the same label whether float noise pushes it
+    # a hair below or above the boundary.
+    base = pd.DataFrame({"a": [1.0, 1.0], "b": [0.0, 0.0], "c": [0.75, 0.75]})
+    noisy = base.copy()
+    noisy.loc[0, "c"] -= 3e-16
+    noisy.loc[1, "c"] += 3e-16
+    assert relevance_labels(noisy)["c"].tolist() == [8, 8] == relevance_labels(base)["c"].tolist()

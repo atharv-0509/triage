@@ -8,6 +8,14 @@
     metapilot evaluate ... --drop-group landmarkers      # landmarker ablation
     metapilot plots    --results runs/pilot
     metapilot pilot    --config configs/pilot.yaml        # build + evaluate + plots
+
+    Phase 2 (LLM selector; training and prediction need the `llm` extra and a GPU):
+    metapilot prompts     --config configs/pilot.yaml --meta data/pilot
+    metapilot llm-train   --prompts data/pilot/llm/prompts.jsonl --fold 0 --kind numeric --out adapters/numeric_f0
+    metapilot llm-predict --prompts data/pilot/llm/prompts.jsonl --kind numeric --fold 0 \\
+                          --adapter adapters/numeric_f0 --out data/pilot/llm/predictions/ft_numeric.jsonl
+
+    metapilot recommend --meta data/pilot --csv my.csv --target label --verify 3
 """
 
 from __future__ import annotations
@@ -51,6 +59,36 @@ def main(argv: list[str] | None = None) -> None:
     p = sub.add_parser("plots", help="draw the report figures from evaluation results")
     p.add_argument("--results", type=Path, required=True)
 
+    q = sub.add_parser("prompts", help="write Phase 2 LLM prompts (<meta>/llm/prompts.jsonl)")
+    q.add_argument("--config", type=Path)
+    q.add_argument("--meta", type=Path, required=True)
+
+    t = sub.add_parser("llm-train", help="QLoRA fine-tune on the training folds of one outer fold (GPU)")
+    t.add_argument("--prompts", type=Path, required=True)
+    t.add_argument("--fold", type=int, required=True)
+    t.add_argument("--kind", choices=["numeric", "semantic"], required=True)
+    t.add_argument("--out", type=Path, required=True, help="adapter directory")
+    t.add_argument("--model", default="Qwen/Qwen2.5-1.5B-Instruct")
+    t.add_argument("--epochs", type=float, default=3)
+    t.add_argument("--max-steps", type=int, default=-1)
+
+    g = sub.add_parser("llm-predict", help="generate rankings with the base model or a fold's adapter")
+    g.add_argument("--prompts", type=Path, required=True)
+    g.add_argument("--kind", choices=["numeric", "semantic"], required=True)
+    g.add_argument("--out", type=Path, required=True,
+                   help="<meta>/llm/predictions/<variant>.jsonl (one file collects all folds)")
+    g.add_argument("--model", default="Qwen/Qwen2.5-1.5B-Instruct")
+    g.add_argument("--adapter", type=Path, help="adapter from llm-train; omit for the zero-shot base model")
+    g.add_argument("--fold", type=int, help="outer fold to predict (required with --adapter)")
+    g.add_argument("--batch-size", type=int, default=8)
+
+    r = sub.add_parser("recommend", help="rank the portfolio for a CSV file")
+    r.add_argument("--meta", type=Path, required=True)
+    r.add_argument("--csv", type=Path, required=True)
+    r.add_argument("--target", required=True)
+    r.add_argument("--verify", type=int, default=0, help="also cross-validate the top-k pipelines")
+    r.add_argument("--selector", default="lambdarank", choices=["lambdarank", "regressor", "knn"])
+
     a = sub.add_parser("pilot", help="build + evaluate + plots")
     a.add_argument("--config", type=Path)
     a.add_argument("--data", type=Path, default=Path("data/pilot"))
@@ -80,6 +118,31 @@ def main(argv: list[str] | None = None) -> None:
     elif args.cmd == "plots":
         for path in plots.make_all(args.results):
             print(path)
+    elif args.cmd == "prompts":
+        from . import llm
+
+        print(llm.write_prompts(args.meta, Config.load(args.config)))
+    elif args.cmd == "llm-train":
+        from . import llm_train
+
+        llm_train.train(args.prompts, args.fold, args.kind, args.out, args.model, epochs=args.epochs,
+                        max_steps=args.max_steps)
+    elif args.cmd == "llm-predict":
+        from . import llm_train
+
+        llm_train.predict(args.prompts, args.kind, args.out, args.model, args.adapter, args.fold,
+                          batch_size=args.batch_size)
+    elif args.cmd == "recommend":
+        from .recommend import recommend_csv
+
+        rec = recommend_csv(args.meta, args.csv, args.target, args.verify, args.selector)
+        rows, cols, k = rec.shape
+        print(f"{rows} rows, {cols} columns, {k} classes" +
+              (f" ({rec.dropped_classes} classes with too few rows dropped)" if rec.dropped_classes else ""))
+        print("\nRecommended pipelines:\n" + rec.ranking.head(10).to_string(index=False))
+        print("\nMost similar tasks in the meta-dataset:\n" + rec.neighbours.to_string(index=False))
+        if rec.verified is not None:
+            print("\nMeasured on this dataset:\n" + rec.verified.to_string(index=False))
     elif args.cmd == "pilot":
         cfg = Config.load(args.config)
         metadataset.build(cfg, args.data)

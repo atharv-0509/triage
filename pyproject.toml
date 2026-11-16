@@ -22,6 +22,10 @@ dependencies = [
 [project.optional-dependencies]
 openml = ["openml>=0.14"]
 flaml = ["flaml[automl]>=2.1"]
+# Phase 2 fine-tuning/generation; tested with torch 2.15, transformers 5.23, peft 0.21, trl 1.18.
+# Add bitsandbytes on a CUDA machine for 4-bit loading.
+llm = ["torch>=2.4", "transformers>=5.0,<6", "peft>=0.17", "trl>=1.0,<2", "datasets>=3.0", "accelerate>=1.0"]
+demo = ["gradio>=5"]
 dev = ["pytest>=7"]
 
 [project.scripts]

@@ -36,8 +36,10 @@ class MetaData:
     def load(cls, meta_dir: str | Path) -> "MetaData":
         d = Path(meta_dir)
         tasks = pd.read_csv(d / "tasks.csv", index_col="task_id")
-        mf = pd.read_csv(d / "metafeatures.csv", index_col="task_id")
-        perf_raw = pd.read_csv(d / "performance.csv", index_col="task_id")
+        # round_trip: parse floats exactly as written, so results do not depend
+        # on the pandas version's default float parser.
+        mf = pd.read_csv(d / "metafeatures.csv", index_col="task_id", float_precision="round_trip")
+        perf_raw = pd.read_csv(d / "performance.csv", index_col="task_id", float_precision="round_trip")
         portfolio = pd.read_csv(d / "portfolio.csv")
         family = dict(zip(portfolio["pipeline"], portfolio["family"]))
 
@@ -46,7 +48,8 @@ class MetaData:
         perf = fill_missing(perf_raw.loc[ids])
         secs = None
         if (d / "fit_seconds.csv").exists():
-            secs = pd.read_csv(d / "fit_seconds.csv", index_col="task_id").loc[ids, perf.columns]
+            secs = pd.read_csv(d / "fit_seconds.csv", index_col="task_id",
+                               float_precision="round_trip").loc[ids, perf.columns]
         return cls(tasks.loc[ids], mf.loc[ids], perf, perf_raw.loc[ids], family, secs)
 
 
@@ -62,11 +65,16 @@ def gap_to_best(perf: pd.DataFrame) -> pd.DataFrame:
 
 
 def relevance_labels(perf: pd.DataFrame, levels: int = 10) -> pd.DataFrame:
-    """Ranking target: per-task min-max rescaling to integers 0..levels."""
+    """Ranking target: per-task min-max rescaling to integers 0..levels.
+
+    Accuracies on small tasks are multiples of 1/n, so scaled values often sit
+    exactly on .5. Rounding to 6 decimals first and then rounding half up keeps
+    1e-15 float noise from flipping labels between library versions.
+    """
     lo, hi = perf.min(axis=1), perf.max(axis=1)
     span = (hi - lo).replace(0, np.nan)
     scaled = perf.sub(lo, axis=0).div(span, axis=0).fillna(1.0)
-    return (scaled * levels).round().astype(int)
+    return np.floor((scaled * levels).round(6) + 0.5).astype(int)
 
 
 def normalised_scores(perf: pd.DataFrame) -> pd.DataFrame:

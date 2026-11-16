@@ -7,9 +7,11 @@ We treat pipeline selection as a learning problem. First, a fixed portfolio of p
 classification tasks. Then a meta-model learns, from dataset meta-features, which pipeline will do best on a
 dataset it has not seen.
 
-* **Phase 1** (implemented here): kNN and LightGBM meta-models trained on 14 numeric meta-features.
-* **Phase 2** (planned): QLoRA fine-tuned Qwen2.5-1.5B-Instruct that ranks pipelines from a text description of
-  the dataset. The text metadata it needs is already collected by the Phase 1 build step (`text_meta.jsonl`).
+* **Phase 1**: kNN and LightGBM meta-models trained on 14 numeric meta-features. Implemented and run.
+* **Phase 2**: QLoRA fine-tuned Qwen2.5-1.5B-Instruct that ranks pipelines from a text profile of the dataset.
+  Prompts, training, generation and scoring are implemented and tested end to end with a tiny offline model; the
+  real fine-tuning run needs a GPU (`notebooks/phase2_qlora_colab.ipynb`) and **has not been run yet**.
+* **Demo**: a Gradio app that ranks the portfolio for an uploaded CSV (`app/demo.py`).
 
 ## Quick start
 
@@ -75,6 +77,53 @@ python -m metapilot flaml --config configs/full.yaml --meta data/full --budget 1
 python -m metapilot flaml --config configs/full.yaml --meta data/full --budget 10 --max-tasks 300   # cheaper
 ```
 
+## Phase 2: LLM selector
+
+```bash
+python -m metapilot prompts --config configs/pilot.yaml --meta data/pilot     # writes data/pilot/llm/prompts.jsonl
+```
+
+Every task gets two prompts. **Prompt A (numeric)** holds the task's shape and all 14 meta-features, the same
+information LightGBM gets (research question 2). **Prompt B (semantic)** adds the column names and the dataset
+description (research question 3). The target is the full portfolio ordered by measured accuracy. Each record
+carries its outer fold from `folds.csv`, the split every method shares.
+
+Fine-tuning and generation run on a GPU. The Colab notebook `notebooks/phase2_qlora_colab.ipynb` runs the whole
+loop on a free T4 and saves to Google Drive after every fold. The same steps from the command line:
+
+```bash
+pip install -e ".[llm]" bitsandbytes
+python -m metapilot llm-predict --prompts P --kind numeric --out data/pilot/llm/predictions/base_numeric.jsonl
+for k in 0 1 2 3 4; do
+  python -m metapilot llm-train   --prompts P --fold $k --kind numeric --out adapters/numeric_f$k
+  python -m metapilot llm-predict --prompts P --fold $k --kind numeric --adapter adapters/numeric_f$k \
+                                  --out data/pilot/llm/predictions/ft_numeric.jsonl
+done                                   # and the same with --kind semantic -> ft_semantic.jsonl
+python -m metapilot evaluate --config configs/pilot.yaml --meta data/pilot --out runs/pilot
+```
+
+(`P` is `data/pilot/llm/prompts.jsonl`.) Each adapter trains only on tasks outside its fold and refuses to predict
+any other fold. `evaluate` adds one `LLM: <variant>` row per predictions file. A model's output is matched to
+pipeline names exactly; pipelines it leaves out are filled in from the training folds' single-best order so the
+ranking is complete. Because a model that names nothing would then score exactly like single best, every LLM row
+reports **`llm_coverage`**, the share of pipelines the model named itself, and `evaluate` warns below 90%.
+`summary_real.csv` repeats all metrics on real (non-synthetic) tasks only, which is the comparison research
+question 3 needs. Synthetic descriptions state their generator settings, so Prompt B should not be compared with
+Prompt A on synthetic tasks.
+
+## Demo
+
+```bash
+pip install -e ".[demo]"
+python app/demo.py --meta data/pilot          # http://127.0.0.1:7860
+python -m metapilot recommend --meta data/pilot --csv my.csv --target label --verify 3   # same, in the terminal
+```
+
+Upload a CSV and choose the target column. The app ranks the portfolio with LightGBM LambdaRank trained on every
+task in the meta-dataset. It also lists the most similar training tasks and the pipeline that won on each, and can
+run the top three pipelines on the data with cross-validation so the ranking can be checked against real
+accuracies.
+
 ## Code layout
 
 | Module | Report section | What it does |
@@ -92,6 +141,11 @@ python -m metapilot flaml --config configs/full.yaml --meta data/full --budget 1
 | `metapilot/metrics.py` | 4.2, 4.6 | Regret@k, top-1 hit, Spearman, bootstrap CIs, regret curve |
 | `metapilot/experiment.py` | 5 | Grouped outer CV over all selectors, dominance check, result tables |
 | `metapilot/plots.py` | 5 | Figures 2–5 |
+| `metapilot/llm.py` | 3.6, 4.4 | Prompt A/B serialisation, ranking parser, scoring of LLM outputs with coverage |
+| `metapilot/llm_train.py` | 4.4 | QLoRA fine-tuning per outer fold and batched generation (GPU; `llm` extra) |
+| `metapilot/recommend.py` | 6 | Recommendations for a new dataset, with similar tasks and optional verification |
+| `app/demo.py` | 6 | Gradio demo |
+| `notebooks/phase2_qlora_colab.ipynb` | 4.4 | Colab T4 notebook for the Phase 2 runs |
 
 ## Outputs
 
@@ -184,8 +238,10 @@ this size the CIs overlap too much to separate the selectors.
 - [x] Scale-up tooling: sharded and resumable build, full portfolio, 10 subsamples, duplicate check; tested at 540
       tasks on local sources
 - [x] FLAML baseline, landmarker ablation and multi-seed evaluation (implemented and run on the local scale test)
-- [ ] Full build on OpenML-CC18 plus supplementary datasets (~150 parents); needs openml.org network access
+- [ ] Full build on OpenML-CC18 plus supplementary datasets (~150 parents): running in a separate cloud session
 - [ ] TabPFN in the portfolio (`portfolio: full_tabpfn`)
-- [ ] Phase 2: prompt serialisation (numeric-only and semantic versions), base-LLM evaluation, QLoRA fine-tuning
-- [ ] Phase 2 evaluation on the same folds and metrics
-- [ ] Gradio demo and final report
+- [x] Phase 2 code: prompts A/B, per-fold QLoRA training, generation, scoring with coverage, Colab notebook
+      (tested end to end with a tiny offline model)
+- [ ] Phase 2 runs on a GPU: base model, fine-tuned A, fine-tuned B; then evaluation on the shared folds
+- [x] Gradio demo and `recommend` command
+- [ ] Final report (draft with Phase 1 numbers in `docs/REPORT_DRAFT.md`)

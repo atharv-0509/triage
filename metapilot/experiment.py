@@ -5,6 +5,11 @@ Writes to ``out_dir``:
 * ``summary.csv``            - Table 6 (regret@1/@3 with 95% CIs, top-1 hit, Spearman,
                                mean seconds to run the top-1/top-3 recommendations,
                                and a FLAML row when ``<meta_dir>/flaml.csv`` exists)
+                               LLM rows (``LLM: <variant>``) come from
+                               ``<meta_dir>/llm/predictions/*.jsonl``, with
+                               ``llm_coverage``: the share of pipelines the model
+                               named itself (the rest follow single best)
+* ``summary_real.csv``       - the same metrics on real (non-synthetic) tasks only
 * ``summary_seeds.csv``      - mean and std of each metric over seeds (``--seeds``)
 * ``per_task_regret1.csv``   - Regret@1 per task and selector
 * ``regret_curve.csv``       - mean regret vs. number of pipelines evaluated
@@ -21,7 +26,7 @@ from pathlib import Path
 
 import pandas as pd
 
-from . import metrics
+from . import llm, metrics
 from .config import Config
 from .metafeatures import GROUPS
 from .metalevel import MetaData, family_win_share, folds_path, make_folds
@@ -69,16 +74,35 @@ def run(meta_dir: str | Path, out_dir: str | Path, cfg: Config, drop_groups: tup
                 for name, scores in oof.items()]
         per_seed.append(pd.DataFrame(rows))
         if seed == cfg.seed:
-            primary, primary_gains = oof, gains
+            primary, primary_gains, primary_folds = oof, gains, folds
+
+    # Phase 2: LLM outputs written by `metapilot llm-predict`, scored on the same split.
+    coverage = {}
+    for variant, path in llm.prediction_files(meta_dir).items():
+        scores, cov = llm.llm_scores(llm.load_jsonl(path), meta, primary_folds)
+        if scores.empty:
+            continue
+        primary[f"LLM: {variant}"] = scores
+        coverage[f"LLM: {variant}"] = cov
+        if cov.mean() < 0.9:
+            log.warning("LLM %s named only %.0f%% of pipelines on average; the rest come from the single-best "
+                        "order, so its metrics are partly single best's", variant, 100 * cov.mean())
 
     # Detailed outputs use the primary seed (the shared folds.csv split).
+    seed_rows = per_seed[0].set_index("selector")
     rows, per_task, curves = [], {}, {}
     for name, scores in primary.items():
         scores.to_csv(out / "scores" / f"{_slug(name)}.csv")
-        s = per_seed[0].set_index("selector").loc[name].drop("seed").to_dict()
+        if name in seed_rows.index:
+            s = seed_rows.loc[name].drop("seed").to_dict()
+        else:
+            s = metrics.summarise(scores, meta.perf, cfg.bootstrap, cfg.seed, cfg.hit_tolerance)
         if meta.secs is not None:
             s["cost@1_s"] = metrics.cost_at_k(scores, meta.secs, 1).mean()
             s["cost@3_s"] = metrics.cost_at_k(scores, meta.secs, 3).mean()
+        if name in coverage:
+            s["llm_coverage"] = coverage[name].mean()
+            s["llm_fully_parsed"] = float((coverage[name] == 1).mean())
         rows.append({"selector": name, **s})
         per_task[name] = metrics.regret_at_k(scores, meta.perf, 1)
         curves[name] = metrics.regret_curve(scores, meta.perf).mean()
@@ -89,6 +113,25 @@ def run(meta_dir: str | Path, out_dir: str | Path, cfg: Config, drop_groups: tup
 
     summary = pd.DataFrame(rows).set_index("selector")
     summary.to_csv(out / "summary.csv", float_format="%.4f")
+
+    # Research question 3 compares methods on real data, where column names and
+    # descriptions mean something.
+    real = meta.tasks.index[~meta.tasks["source"].isin(llm.SYNTHETIC_SOURCES)]
+    if len(real):
+        real_rows = []
+        for name, scores in primary.items():
+            sub = scores.loc[scores.index.intersection(real)]
+            if len(sub):
+                s = metrics.summarise(sub, meta.perf, cfg.bootstrap, cfg.seed, cfg.hit_tolerance)
+                if name in coverage:
+                    s["llm_coverage"] = coverage[name].loc[sub.index].mean()
+                real_rows.append({"selector": name, **s})
+        flaml_real = flaml_row(meta, Path(meta_dir) / "flaml.csv", cfg, tasks=real)
+        if flaml_real is not None:
+            real_rows.append(flaml_real)
+        pd.DataFrame(real_rows).set_index("selector").to_csv(out / "summary_real.csv", float_format="%.4f")
+        log.info("real-data subset: %d tasks from %d parents -> summary_real.csv",
+                 len(real), meta.tasks.loc[real, "parent"].nunique())
     pd.DataFrame(per_task).to_csv(out / "per_task_regret1.csv", float_format="%.4f")
     pd.DataFrame(curves).rename_axis("n_evaluated").to_csv(out / "regret_curve.csv", float_format="%.4f")
     gain = pd.concat(primary_gains, axis=1).mean(axis=1)
@@ -120,13 +163,13 @@ def cross_validate(meta: MetaData, mf: pd.DataFrame, folds: pd.Series, seed: int
     return {name: pd.concat(parts).loc[meta.perf.index] for name, parts in oof.items()}, gains
 
 
-def flaml_row(meta: MetaData, path: Path, cfg: Config) -> dict | None:
+def flaml_row(meta: MetaData, path: Path, cfg: Config, tasks: pd.Index | None = None) -> dict | None:
     """Summary row for the FLAML baseline, if ``metapilot flaml`` has been run.
     Regret is against the best portfolio pipeline and can be negative."""
     if not path.exists():
         return None
     f = pd.read_csv(path, index_col="task_id")
-    f = f[f["accuracy"].notna() & f.index.isin(meta.perf.index)]
+    f = f[f["accuracy"].notna() & f.index.isin(meta.perf.index if tasks is None else tasks)]
     if f.empty:
         return None
     regret = 100 * (meta.perf.loc[f.index].max(axis=1) - f["accuracy"])
@@ -158,5 +201,7 @@ def format_summary(summary: pd.DataFrame) -> str:
                 f"{num(r.get('spearman'), '9.2f'):>9}")
         if has_cost:
             line += f" {num(r.get('cost@1_s'), '9.2f'):>9} {num(r.get('cost@3_s'), '9.2f'):>9}"
+        if pd.notna(r.get("llm_coverage")):
+            line += f"   (LLM named {100 * r['llm_coverage']:.0f}% of pipelines)"
         lines.append(line)
     return "\n".join(lines)
