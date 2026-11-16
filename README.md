@@ -110,7 +110,9 @@ free T4, on Colab or Kaggle (it detects which), or on any machine with a GPU.
 On either platform, check the coverage the notebook prints after the base model and after the first fine-tuned
 fold. If it is far below 100%, stop: the model is not producing rankings. By default the notebook builds the pilot
 meta-dataset itself. For the full OpenML study, set `CONFIG = "configs/full.yaml"`, `META = "metadata/full"` and
-`RUN_NAME = "full"` in the first cell once `metadata/full/` has been pushed. The notebook was run end to end on CPU
+`RUN_NAME = "full"` in the first cell once `metadata/full/` has been pushed. These are now the notebook's defaults,
+with `EPOCHS = 1` to keep the full run to roughly 5–6 hours on a T4 (an estimate from the pilot's timings); the
+pilot settings are given in a comment in that cell. The notebook was run end to end on CPU
 with a tiny stand-in model; it has not yet run on a T4 with Qwen.
 
 The same steps from the command line:
