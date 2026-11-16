@@ -1,0 +1,42 @@
+name: full
+seed: 0
+sources:
+- openml
+- sklearn
+- synthetic
+- moons_circles
+sklearn_datasets:
+- wine
+- iris
+n_synthetic: 40
+n_moons_circles: 10
+openml_suite_id: 99
+openml_extra:
+- ionosphere
+- sonar
+- heart-statlog
+- hepatitis
+- haberman
+- arcene
+- madelon
+- gina
+openml_cache_dir: openml_cache
+max_rows: 2000
+subsamples_per_parent: 10
+row_frac:
+- 0.3
+- 1.0
+col_frac:
+- 0.5
+- 1.0
+min_class_count: 6
+high_cardinality: 20
+landmarker_rows: 200
+portfolio: full
+cv_folds: 3
+fit_timeout: 120
+n_jobs: -1
+outer_folds: 5
+knn_k: 5
+bootstrap: 2000
+hit_tolerance: 0.5
