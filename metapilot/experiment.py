@@ -103,6 +103,7 @@ def run(meta_dir: str | Path, out_dir: str | Path, cfg: Config, drop_groups: tup
         if name in coverage:
             s["llm_coverage"] = coverage[name].mean()
             s["llm_fully_parsed"] = float((coverage[name] == 1).mean())
+        s.update(metrics.diversity(scores))
         rows.append({"selector": name, **s})
         per_task[name] = metrics.regret_at_k(scores, meta.perf, 1)
         curves[name] = metrics.regret_curve(scores, meta.perf).mean()

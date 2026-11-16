@@ -7,9 +7,9 @@ Guide: Dr. Neha Kumari. Intelligent Model Design Lab.
 
 > **Status of this draft.** Phase 1 numbers come from this repository's pilot and from a 540-task scale test.
 > The full OpenML-CC18 study is running; its tables replace Section 4.2 when it finishes (`results/full/`).
-> **Phase 2 (LLM) has not been run.** The code and Colab notebook are ready, but no fine-tuned model exists yet,
-> so Sections 5 and 6 (RQ2, RQ3) have no numbers. An earlier draft (IMD 1.0) reported LLM tables that came from
-> a simulation that returned the single-best ranking; they have been removed (see `docs/IMD_1.0_REVIEW.md`).
+> **Phase 2 (LLM) has been run on the pilot only** (Section 5). The run on the full study is still to do.
+> An earlier draft (IMD 1.0) reported LLM tables that came from a simulation that returned the single-best
+> ranking; they have been removed (see `docs/IMD_1.0_REVIEW.md`).
 
 ## 1. Research questions
 
@@ -129,24 +129,60 @@ measured against the best of 38 CV estimates. The full-study run uses a budget m
 
 ## 5. Phase 2: LLM selector (RQ2, RQ3)
 
-**Not yet run.** The protocol is implemented (`metapilot/llm.py`, `metapilot/llm_train.py`,
-`notebooks/phase2_qlora.ipynb`) and tested end to end with a tiny offline model. The three variants to run
-are: base model zero-shot with Prompt A, fine-tuned on Prompt A, and fine-tuned on Prompt B. Each fine-tuned
-variant needs one adapter per outer fold.
+**Setup.** Qwen2.5-1.5B-Instruct with 4-bit QLoRA (r = 16, 3 epochs), one adapter per outer fold and prompt kind,
+trained only on the other folds (`metapilot/llm_train.py`, `notebooks/phase2_qlora.ipynb`). There are three
+variants: the base model zero-shot with Prompt A, fine-tuned on Prompt A (the 14 meta-features, the same
+information LightGBM gets), and fine-tuned on Prompt B (Prompt A plus column names and description).
 
-Reporting rules for this section:
+**Reporting rules.**
 
 * Every LLM row reports **coverage**, the share of pipelines the model named itself. Missing pipelines are filled
-  in from the single-best order, so a model with low coverage scores close to single best. Such a row is not
-  evidence that the LLM selects anything.
-* RQ3 is answered on real (non-synthetic) tasks only (`summary_real.csv`). Synthetic descriptions list their
+  in from the single-best order, so a model with low coverage scores close to single best.
+* Every row also reports **diversity**: how many different rankings and first picks the method produced. A model
+  that gives every task the same ranking is a fixed default, whatever its regret.
+* RQ3 is compared on real (non-synthetic) tasks only (`summary_real.csv`). Synthetic descriptions list their
   generator settings and would give Prompt B extra numeric information.
+
+### 5.1 Pilot run (120 tasks, 18 pipelines; Colab T4, about 40 minutes)
+
+Colab built its own copy of the pilot meta-dataset, so the Phase 1 rows differ slightly from Section 4.1. All rows
+below were scored on that one build (`results/pilot_llm/`).
+
+| Selector | Regret@1 (95% CI) | Regret@3 | Spearman | Coverage | Distinct rankings | Regret@1, 16 real tasks |
+|---|---|---|---|---|---|---|
+| Single best | 2.55 (2.07–3.07) | 1.72 | 0.36 | – | 1 per fold | 1.66 |
+| kNN meta-learner | 3.40 (2.70–4.23) | 1.51 | 0.36 | – | – | 2.77 |
+| LightGBM regressor | 3.06 (2.49–3.72) | 1.41 | 0.39 | – | – | 2.45 |
+| LightGBM LambdaRank | 3.49 (2.66–4.51) | 1.64 | 0.33 | – | – | 3.26 |
+| LLM, base (zero-shot, A) | 8.64 (7.75–9.67) | 3.01 | −0.11 | 81% | 33 (always `tree_full` first) | 9.49 |
+| LLM, fine-tuned, A | 3.42 (2.83–4.07) | 1.80 | 0.30 | 100% | **11** (1–4 per fold) | 1.98 |
+| LLM, fine-tuned, B | 4.08 (3.29–4.97) | 2.05 | 0.22 | 99% | 35 (4–11 per fold) | 1.34 (0.73–2.00) |
+
+What the pilot shows:
+
+* **Fine-tuning is needed.** Zero-shot, the base model does not follow the format reliably (81% coverage) and is
+  worse than random (Regret@1 8.64 against 5.27).
+* **The fine-tuned numeric model collapsed to a fixed ranking.** It produced 11 different rankings for 120 tasks;
+  the fold 0 adapter gave the same ranking to all 24 of its test tasks. With 96 training tasks per fold it learned
+  roughly the average ranking of its training data and ignores the dataset profile. Its regret, close to kNN's, is
+  therefore the regret of a fixed default, and a worse one than single best. It is not evidence of selection.
+* **Prompt B varies more** (35 rankings, 7 different first picks) and has the lowest Regret@1 on the 16 real tasks
+  (1.34 against 1.66 for single best and 1.98 for Prompt A). Those 16 tasks come from only 4 parents (iris, wine,
+  breast cancer, digits), the intervals overlap, and these datasets are famous enough that the model may know
+  them from pretraining. This is not evidence for RQ3 yet.
+
+### 5.2 Full study
+
+To do: the same notebook with `META = "metadata/full"`. There are about 10 times more training tasks per fold,
+which may or may not prevent the collapse; the diversity columns will show it.
 
 ## 6. Answers to the research questions
 
 * **RQ1:** provisional answer in Section 4.2; to be confirmed with the OpenML study.
-* **RQ2:** pending the Phase 2 run.
-* **RQ3:** pending the Phase 2 run.
+* **RQ2:** pilot only. The fine-tuned LLM did not learn to use the numeric information; it reproduced a fixed
+  ranking. To be tested at full scale.
+* **RQ3:** pilot only. There is a weak, non-significant hint on 16 real tasks that is confounded by pretraining
+  knowledge of famous datasets. To be tested at full scale.
 
 ## 7. Limitations
 

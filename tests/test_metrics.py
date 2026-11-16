@@ -42,3 +42,10 @@ def test_bootstrap_ci_brackets_mean():
     v = np.random.default_rng(0).normal(3, 1, size=200)
     lo, hi = metrics.bootstrap_ci(v, 500)
     assert lo < v.mean() < hi
+
+
+def test_diversity():
+    perf, scores = _toy()
+    assert metrics.diversity(scores) == {"distinct_rankings": 2, "distinct_top1": 2}
+    same = pd.DataFrame([[3.0, 2.0, 1.0]] * 4, columns=["a", "b", "c"])
+    assert metrics.diversity(same) == {"distinct_rankings": 1, "distinct_top1": 1}

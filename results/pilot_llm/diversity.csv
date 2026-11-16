@@ -1,0 +1,5 @@
+variant,tasks,distinct_rankings,distinct_rankings_per_fold,distinct_top1,most_common_top1,picked_a_best_pipeline
+base_numeric,120,33,12 11 17 12 12,1,tree_full (120),3
+ft_numeric,120,11,1 2 2 2 4,3,svm_rbf_C10 (72),15
+ft_semantic,120,35,4 7 8 8 11,7,svm_rbf_C10 (52),15
+single best (reference),120,1 per fold,1 1 1 1 1,,,22

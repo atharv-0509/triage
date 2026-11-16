@@ -31,6 +31,17 @@ def regret_curve(scores: pd.DataFrame, perf: pd.DataFrame) -> pd.DataFrame:
     return pd.DataFrame({k: regret_at_k(scores, perf, k) for k in range(1, P + 1)})
 
 
+def diversity(scores: pd.DataFrame) -> dict[str, int]:
+    """How many different rankings and different first picks a selector made.
+
+    A selector that ignores the task (single best, or an LLM that collapsed to
+    one memorised order) has very few; use this next to the regret numbers.
+    """
+    order = ranking(scores)
+    return {"distinct_rankings": len({tuple(r) for r in order}),
+            "distinct_top1": len(set(order[:, 0]))}
+
+
 def cost_at_k(scores: pd.DataFrame, secs: pd.DataFrame, k: int) -> pd.Series:
     """Seconds spent running the top-k recommended pipelines, per task."""
     s = secs.loc[scores.index, scores.columns].to_numpy()

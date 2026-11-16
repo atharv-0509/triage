@@ -193,6 +193,17 @@ Snapshots of the result tables and figures are kept in `results/`. Regret is mea
 better), using 5-fold grouped outer CV. The full OpenML study is running in a separate session and will be added
 here when it finishes.
 
+### Phase 2 pilot (`results/pilot_llm/`)
+
+Qwen2.5-1.5B-Instruct with QLoRA was run on the pilot (120 tasks) in Colab: about 40 minutes on a T4. Zero-shot, the
+base model is worse than random (Regret@1 8.64). The fine-tuned numeric model names every pipeline (100% coverage)
+and reaches Regret@1 3.42, against 2.55 for single best. But it **collapsed to a nearly fixed ranking**: 11
+distinct rankings for 120 tasks, and one ranking for all 24 tasks of fold 0. So it learned an average order, not to
+read the profile. The semantic model varies more (35 rankings) and is lowest on the 16 real tasks (1.34 against
+1.66 for single best). That subset is 4 famous datasets, the intervals overlap, and the model may recognise them
+from pretraining. Details in `docs/REPORT_DRAFT.md` Section 5. `evaluate` now reports `distinct_rankings` and
+`distinct_top1` for every method, so a collapse like this shows up in the main table.
+
 ### Scale test: full-study settings on local sources (`configs/local_full.yaml`)
 
 This run uses 54 parents (4 scikit-learn, 40 synthetic, 10 moons/circles) with 10 subsamples each, giving 540 tasks.
@@ -278,6 +289,7 @@ fixed now (see the implementation notes).
 - [ ] TabPFN in the portfolio (`portfolio: full_tabpfn`)
 - [x] Phase 2 code: prompts A/B, per-fold QLoRA training, generation, scoring with coverage, Colab notebook
       (tested end to end with a tiny offline model)
-- [ ] Phase 2 runs on a GPU: base model, fine-tuned A, fine-tuned B; then evaluation on the shared folds
+- [x] Phase 2 pilot run on a Colab T4 (base, fine-tuned A, fine-tuned B): fine-tuned A collapsed to a fixed ranking
+- [ ] Phase 2 run on the full study (`META = "metadata/full"`)
 - [x] Gradio demo and `recommend` command
 - [ ] Final report (draft with Phase 1 numbers in `docs/REPORT_DRAFT.md`)
