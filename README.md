@@ -205,8 +205,7 @@ better), using 5-fold grouped outer CV.
 131 parents: all 72 OpenML-CC18 datasets, 7 of the 8 supplementary OpenML datasets (madelon is already in CC18),
 wine, iris, 40 synthetic and 10 moons/circles parents. Each parent gets 10 subsamples, which gives 1,310 tasks
 (810 of them from the 81 real parents). The 38-pipeline portfolio is run with 3-fold CV on tasks capped at 2,000
-rows, 149,340 fits in all, taking about 5 hours of wall time on 4 cores (about 20 CPU-hours). No task failed. 75 of the 49,780 task-pipeline cells
-(0.15%, mostly kNN and HistGradientBoosting on the widest tasks) did not finish and are filled as failures. The
+rows, 149,340 fits in all, taking about 5 hours of wall time on 4 cores (about 20 CPU-hours). No task failed. 75 of the 49,780 task-pipeline cells (0.15%) have no result and are filled with the task's lowest score: `knn_30_dist` cannot run on 21 tiny synthetic tasks with fewer than 30 training rows per fold, and the HistGradientBoosting variants and `rf_300_mf0.5` hit the 120 s per-fit limit on the two widest image datasets (CIFAR-10 and Devnagari-Script, about 1,000–2,800 columns). The
 meta-dataset is exported to `metadata/full/` (12 MB) for Phase 2.
 
 The table uses the shared `folds.csv` split, with 95% bootstrap CIs. The ± columns are the mean and standard

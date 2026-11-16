@@ -95,11 +95,13 @@ def evaluate_task(task: Task, cfg: Config) -> dict:
                     Xtr, Xte = task.X.iloc[tr], task.X.iloc[te]
                     pipe = build_pipeline(spec, Xtr, seed, cfg.high_cardinality)
                     t0 = time.perf_counter()
-                    with time_limit(cfg.fit_timeout):
-                        pipe.fit(Xtr, task.y[tr])
-                        pred = pipe.predict(Xte)
-                    dt = time.perf_counter() - t0
-                    elapsed += dt
+                    try:
+                        with time_limit(cfg.fit_timeout):
+                            pipe.fit(Xtr, task.y[tr])
+                            pred = pipe.predict(Xte)
+                    finally:  # count the time of fits that time out or fail too
+                        dt = time.perf_counter() - t0
+                        elapsed += dt
                     if dt > cfg.fit_timeout:
                         raise FitTimeout()
                     scores.append(float(np.mean(pred == task.y[te])))

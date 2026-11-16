@@ -162,8 +162,6 @@ def predict(prompts_path: str | Path, kind: str, out_path: str | Path, model_id:
     model) all tasks may be predicted. Tasks already in ``out_path`` are
     skipped, so one file collects all folds and interrupted runs resume.
     """
-    import torch
-
     if kind not in KINDS:
         raise ValueError(f"kind must be one of {KINDS}")
     rows = load_jsonl(prompts_path)
@@ -189,6 +187,8 @@ def predict(prompts_path: str | Path, kind: str, out_path: str | Path, model_id:
     if not rows:
         log.info("nothing to predict for %s", out)
         return out
+
+    import torch  # only now: the checks above must work without the llm extra
 
     model, tok, _ = _load_model(model_id, load_in_4bit)
     if adapter is not None:

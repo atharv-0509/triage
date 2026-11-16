@@ -112,3 +112,15 @@ def test_failing_task_does_not_stop_build(tmp_path, monkeypatch):
     out = metadataset.build(_cfg(), tmp_path / "meta")
     perf = pd.read_csv(out / "performance.csv", index_col="task_id")
     assert len(perf) == 4 and not perf.index.str.endswith("__s0").any()
+
+
+def test_timed_out_fits_record_their_time():
+    from metapilot.augment import Task
+
+    rng = np.random.default_rng(0)
+    X = pd.DataFrame(rng.normal(size=(300, 5)), columns=list("abcde"))
+    task = Task("t", "p", "s", X, (X["a"] > 0).to_numpy().astype(int))
+    r = metadataset.evaluate_task(task, _cfg(fit_timeout=0.005))
+    slow = [p for p, a in r["acc"].items() if np.isnan(a)]
+    assert slow, "expected some fits to exceed a 5 ms limit"
+    assert all(r["secs"][p] > 0 for p in slow)

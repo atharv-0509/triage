@@ -5,8 +5,8 @@
 Atharv Arora (S24CSEU2439), Ansh Dixit (S24CSEU1018), Anvi Tyagi (S24CSEU1026), Fairy Tyagi (S24CSEU0794)
 Guide: Dr. Neha Kumari. Intelligent Model Design Lab.
 
-> **Status of this draft.** Phase 1 numbers come from this repository's pilot and from a 540-task scale test.
-> The full OpenML-CC18 study is running; its tables replace Section 4.2 when it finishes (`results/full/`).
+> **Status of this draft.** Phase 1 is complete on the full OpenML study (Section 4.1, `results/full/`), with the
+> pilot and a 540-task scale test kept as earlier stages (Section 4.4).
 > **Phase 2 (LLM) has been run on the pilot only** (Section 5). The run on the full study is still to do.
 > An earlier draft (IMD 1.0) reported LLM tables that came from a simulation that returned the single-best
 > ranking; they have been removed (see `docs/IMD_1.0_REVIEW.md`).
@@ -28,9 +28,11 @@ Guide: Dr. Neha Kumari. Intelligent Model Design Lab.
   `make_classification` datasets with varied size, dimensionality, class separation, label noise and
   non-linearity, and 6 moons/circles datasets with extra noise columns.
 * Scale test: 54 parents with the same sources (4 + 40 + 10).
-* Full study: OpenML-CC18 (72 datasets) and supplementary small and high-dimensional OpenML datasets, plus
-  synthetic parents. Parents that look like copies of each other are dropped, for example scikit-learn's breast
-  cancer, which is wdbc in CC18.
+* Full study: 131 parents. These are all 72 OpenML-CC18 datasets, 7 supplementary OpenML datasets (ionosphere,
+  sonar, heart-statlog, hepatitis, haberman, arcene, gina; madelon is already in CC18), wine and iris from
+  scikit-learn, 40 `make_classification` and 10 moons/circles parents. 81 of the parents are real. Parents that look
+  like copies of each other are dropped, which is why scikit-learn's breast cancer and digits are not used: CC18 has
+  them as wdbc and optdigits.
 
 **Tasks.** Each parent is subsampled several times: 4 subsamples in the pilot and 10 in the scale test and full
 study. A subsample keeps a random 30–100% of rows and 50–100% of columns, and is capped at 800 rows (pilot) or
@@ -42,7 +44,10 @@ study. A subsample keeps a random 30–100% of rows and 50–100% of columns, an
 * Scale test and full study: 38 pipelines, with 3–6 configurations per family.
 
 Imputation, encoding and scaling are fitted inside each CV training fold. Each pipeline's score on a task is its
-mean 3-fold stratified CV accuracy. A failed or timed-out fit takes the task's lowest score.
+mean 3-fold stratified CV accuracy. A failed or timed-out fit takes the task's lowest score. In the full study,
+which ran 149,340 fits (about 20 CPU-hours), this affected 75 of the 49,780 task-pipeline cells (0.15%).
+`knn_30_dist` cannot run on 21 tiny synthetic tasks with fewer than 30 training rows per fold, and three
+HistGradientBoosting variants and `rf_300_mf0.5` hit the 120 s per-fit limit on CIFAR-10 and Devnagari-Script.
 
 **Meta-features.** There are 14 in four groups: simple (4), statistical (4), information-theoretic (2) and
 landmarkers (4: decision stump, 1-NN, Gaussian naive Bayes and LDA, each scored by 2-fold CV on at most 200 rows).
@@ -72,60 +77,85 @@ Robustness is checked by repeating the grouped split with 5 seeds.
 
 ## 4. Phase 1 results (RQ1)
 
-### 4.1 Pilot: 120 tasks, 18 pipelines
+### 4.1 Full study: 1,310 tasks from 131 parents, 38 pipelines
 
-| Selector | Regret@1 (95% CI) | Regret@3 (95% CI) | Top-1 hit | Spearman |
-|---|---|---|---|---|
-| Random | 5.28 (4.29–6.54) | 2.19 (1.72–2.72) | 13.3% | −0.05 |
-| Single best | 2.54 (2.07–3.06) | 1.72 (1.35–2.10) | 29.2% | 0.36 |
-| kNN meta-learner | 3.39 (2.69–4.23) | 1.48 (1.10–1.91) | 21.7% | 0.36 |
-| LightGBM regressor | 2.80 (2.28–3.40) | 1.33 (1.01–1.72) | 25.0% | 0.39 |
-| LightGBM LambdaRank | 3.55 (2.67–4.63) | 1.43 (1.08–1.84) | 24.2% | 0.33 |
-
-At 120 tasks, none of the meta-models beats single best at Regret@1. At Regret@3 the meta-models are slightly
-better, but all the intervals overlap. LambdaRank is unstable at this size: changing 11 of its 2,160 training
-labels (float noise, since fixed) moved its Regret@1 by 0.6 points.
-
-### 4.2 Scale test: 540 tasks, 38 pipelines (85% synthetic parents)
+All rows use the shared `folds.csv` split. The ± columns are the mean and standard deviation over 5 outer-CV seeds.
+Every number below was reproduced exactly from the committed meta-dataset (`metadata/full/`).
 
 | Selector | Regret@1 (95% CI) | Regret@3 (95% CI) | Top-1 hit | Spearman | Regret@1, 5 seeds | Regret@3, 5 seeds |
 |---|---|---|---|---|---|---|
-| Random | 6.88 (6.23–7.62) | 3.05 (2.71–3.40) | 13.3% | 0.00 | 7.20 ± 0.45 | 3.02 ± 0.10 |
-| Single best | 2.94 (2.66–3.21) | 2.24 (1.99–2.49) | 25.2% | 0.36 | 2.94 ± 0.00 | 2.24 ± 0.00 |
-| kNN meta-learner | 3.15 (2.85–3.48) | 1.92 (1.70–2.15) | 23.9% | 0.47 | 3.21 ± 0.15 | 1.93 ± 0.07 |
-| LightGBM regressor | 3.08 (2.78–3.40) | 1.94 (1.71–2.17) | 24.8% | 0.48 | 3.05 ± 0.10 | 1.98 ± 0.04 |
-| LightGBM LambdaRank | 2.72 (2.46–2.99) | 1.53 (1.35–1.74) | 26.3% | 0.44 | 2.77 ± 0.10 | 1.57 ± 0.04 |
+| Random | 6.62 (6.15–7.07) | 2.69 (2.50–2.89) | 11.4% | 0.00 | 6.65 ± 0.51 | 2.62 ± 0.08 |
+| Single best | 2.64 (2.48–2.80) | 1.96 (1.82–2.09) | 26.5% | 0.45 | 2.64 ± 0.00 | 1.95 ± 0.01 |
+| kNN meta-learner | 2.87 (2.66–3.07) | 1.64 (1.51–1.76) | 26.4% | 0.50 | 3.11 ± 0.20 | 1.72 ± 0.12 |
+| LightGBM regressor | 2.57 (2.41–2.72) | 1.55 (1.44–1.67) | 26.8% | 0.52 | 2.64 ± 0.14 | 1.61 ± 0.09 |
+| LightGBM LambdaRank | **2.37** (2.22–2.53) | **1.23** (1.13–1.34) | 26.6% | 0.52 | **2.41 ± 0.07** | **1.28 ± 0.06** |
 
-With 4.5 times as many tasks, LambdaRank has the lowest regret at both cutoffs. At Regret@3 all three
-meta-models are ahead of single best (2.24, CI 1.99–2.49). LambdaRank's interval (1.35–1.74) does not overlap
-single best's, while kNN's and the regressor's overlap it slightly. At Regret@1 only LambdaRank is ahead, by 0.2
-points, and its CI overlaps single best's. No family wins more than 17% of tasks
-(extra trees 17%, MLP 15%, SVM 15%), so the selection problem is not trivial. Figures:
-`results/local_full/figures/`.
+Subsamples of one parent are not independent, so method differences are tested with a **paired bootstrap that
+resamples parents** (all 10 subsamples of a dataset move together):
 
-**Provisional answer to RQ1.** This holds only on synthetic-heavy data and still has to be confirmed on OpenML.
-A meta-model's advantage over a strong default is small for the very first recommendation and becomes clear once
-the top three are tried. That is the opposite of the pilot's reading ("the advantage disappears at k = 3"), which
-did not survive the larger meta-dataset.
+| Difference in Regret@1 | Mean | 95% interval |
+|---|---|---|
+| LambdaRank − single best | −0.26 | −0.56 to −0.01 |
+| Regressor − single best | −0.07 | −0.22 to +0.09 |
+| kNN − single best | +0.23 | −0.15 to +0.67 |
+| LambdaRank − regressor | −0.19 | −0.43 to +0.03 |
 
-### 4.3 Landmarker ablation
+**Where the advantage is.** The table below gives mean regret after evaluating the top k recommendations, and
+LambdaRank's paired difference from single best (same parent-level bootstrap):
 
-| Selector | Regret@1, 14 features | Regret@1, without landmarkers | Regret@3, 14 features | Regret@3, without landmarkers |
+| k | 1 | 2 | 3 | 5 | 8 | 10 |
+|---|---|---|---|---|---|---|
+| Single best | 2.64 | 2.44 | 1.96 | 1.44 | 0.80 | 0.62 |
+| LambdaRank | 2.37 | 1.59 | 1.23 | 0.88 | 0.61 | 0.49 |
+| Difference (95% interval) | −0.26 (−0.55 to −0.01) | −0.84 (−1.12 to −0.61) | −0.72 (−0.99 to −0.51) | −0.56 (−0.80 to −0.36) | −0.19 (−0.27 to −0.13) | −0.14 (−0.20 to −0.08) |
+
+**Real tasks only** (`summary_real.csv`, 810 tasks from 81 parents) shows the same ordering. LambdaRank's Regret@1
+is 2.06 (1.89–2.22) against 2.37 (2.18–2.56) for single best; the paired difference is −0.32 (−0.73 to +0.05), not
+significant. Its Regret@3 is 0.95 (0.85–1.06) against 1.80 (1.64–1.97).
+
+Winners are spread over many families: SVM-RBF 18%, extra trees 16%, gradient boosting 16%, MLP 13%, random forest
+12%, logistic regression 11%. Top-1 hit rates are about 26–27% for every method except random, so the meta-models
+do not pick the exact winner more often than single best does. Their gain comes from better near misses and better
+second and third choices.
+
+### 4.2 Landmarker ablation
+
+| Selector | Regret@1, 14 features | Regret@1, no landmarkers | Regret@3, 14 features | Regret@3, no landmarkers |
 |---|---|---|---|---|
-| kNN meta-learner | 3.15 | 3.61 | 1.92 | 2.21 |
-| LightGBM regressor | 3.08 | 3.08 | 1.94 | 2.02 |
-| LightGBM LambdaRank | 2.72 | 2.85 | 1.53 | 1.62 |
+| kNN meta-learner | 2.87 | 2.76 | 1.64 | 1.53 |
+| LightGBM regressor | 2.57 | 2.45 | 1.55 | 1.57 |
+| LightGBM LambdaRank | 2.37 | 2.27 | 1.23 | 1.20 |
 
-Landmarkers carry 56% of the LightGBM regressor's gain, and the kNN meta-learner depends on them clearly. The
-LightGBM models lose little without them, so their advantage is not just a shortcut through the naive Bayes
-landmarker matching the naive Bayes pipeline.
+On the full study, removing the four landmarkers leaves every meta-model level or slightly better, and all the
+differences fall inside the CIs. In the synthetic-heavy scale test, kNN was clearly worse without them (3.15 → 3.61).
+The LDA landmarker still has the second-highest gain in the regressor, so the information it carries seems to be
+available from the other meta-features as well. This also rules out the concern that the naive Bayes landmarker
+leaks the naive Bayes pipeline's score: the meta-models do not need landmarkers at all.
 
-### 4.4 FLAML
+### 4.3 FLAML
 
-On 60 evenly spread tasks of the scale test, FLAML had 5 s per CV fold (about 15 s per task). Its Regret@1 was
-5.78 (4.43–7.16). On the same tasks LambdaRank scored 2.71 at Regret@1 and 1.41 at Regret@3, and running its top 3
-took about 3 s. FLAML's default search space has no SVM, kNN or MLP, which win often on this pool, and regret is
-measured against the best of 38 CV estimates. The full-study run uses a budget matched to the meta-models' cost.
+FLAML ran on 300 evenly spread tasks with 5 s per CV fold, about 16 s per task. Its Regret@1 was 4.49 (3.91–5.19).
+On the same 300 tasks LambdaRank scored 2.43 and single best 2.53, and FLAML beat LambdaRank's first pick on 30% of
+them. So FLAML had more compute than LambdaRank's top 1 (about 1.6 s) or top 3 (about 6 s) and still did worse on
+average. Three caveats apply:
+
+* FLAML's default search space has no SVM, kNN or MLP, which win about 35% of tasks here.
+* Regret is measured against the best of 38 CV estimates, which is optimistic about the oracle and penalises any
+  single method.
+* A different budget could change the picture.
+
+### 4.4 Earlier stages: pilot and scale test
+
+| Selector | Pilot (120 tasks, 18 pipelines) Regret@1 / @3 | Scale test (540 tasks, 85% synthetic) Regret@1 / @3 |
+|---|---|---|
+| Single best | 2.54 / 1.72 | 2.94 / 2.24 |
+| kNN meta-learner | 3.39 / 1.48 | 3.15 / 1.92 |
+| LightGBM regressor | 2.80 / 1.33 | 3.08 / 1.94 |
+| LightGBM LambdaRank | 3.55 / 1.43 | 2.72 / 1.53 |
+
+At 120 tasks nothing beat single best at Regret@1. LambdaRank was also unstable there: 11 of 2,160 training labels
+flipping on float noise (since fixed) moved its Regret@1 by 0.6 points. LambdaRank's lead appeared at 540 tasks
+and held on the full study. Details: `results/pilot/`, `results/local_full/`.
 
 ## 5. Phase 2: LLM selector (RQ2, RQ3)
 
@@ -181,7 +211,15 @@ full-scale run with `SHUFFLE_CANDIDATES = False`, which costs about the same GPU
 
 ## 6. Answers to the research questions
 
-* **RQ1:** provisional answer in Section 4.2; to be confirmed with the OpenML study.
+* **RQ1: yes, modestly for the first pick and clearly for a small budget.** Trained on 1,310 tasks, LightGBM
+  LambdaRank has lower mean regret than the single-best default at every budget up to k = 30; beyond that both are
+  within 0.01 points of zero. At k = 1 the gain is small and only just significant (−0.26 accuracy points, 95%
+  interval −0.56 to −0.01, resampling datasets). It is largest at k = 2–4 (about −0.7 to −0.8 points). It then
+  shrinks: under 0.2 points from k = 7, under 0.1 from k = 16, and practically gone (under 0.02) from k = 23. The kNN
+  meta-learner and the regressor are not distinguishable from single best at k = 1, and help only from k = 2 on.
+  A meta-model is therefore most useful when a user can afford to try two to four pipelines, adds little beyond
+  about eight, and nothing beyond about twenty. The pilot's reading, that the advantage disappears at k = 3, came
+  from too few training tasks.
 * **RQ2:** pilot only. The fine-tuned LLM did not learn to use the numeric information; it reproduced a fixed
   ranking. To be tested at full scale.
 * **RQ3:** pilot only. There is a weak, non-significant hint on 16 real tasks that is confounded by pretraining
@@ -189,10 +227,13 @@ full-scale run with `SHUFFLE_CANDIDATES = False`, which costs about the same GPU
 
 ## 7. Limitations
 
-* The scale test is about 85% synthetic. The pilot's real-data subset is 4 parents, and conclusions about real
-  data wait for OpenML.
+* The full study has 81 real parents, 72 of them from OpenML-CC18, so the results describe medium-sized benchmark
+  classification data. Tasks are capped at 2,000 rows, and very large or very wide datasets are underrepresented.
+* The 10 subsamples of a parent are correlated. All significance statements use a bootstrap over parents, but the
+  per-task CIs in the tables are narrower than they would be with independent tasks.
 * Each performance value comes from 3-fold CV on at most 2,000 rows, so it is noisy. Regret against the best of
   38 such estimates favours the oracle.
+* 75 task-pipeline cells (0.15%) failed or timed out and take the task's lowest score (Section 2).
 * Accuracy is the only metric, and TabPFN is not yet in the portfolio.
 * The pilot results in this draft differ from the Milestone 2 report because the synthetic parents are generated
   differently.
@@ -206,4 +247,8 @@ python -m metapilot build --config configs/local_full.yaml --out data/local_full
 python -m metapilot evaluate --config configs/local_full.yaml --meta data/local_full --out runs/local_full --seeds 1 2 3 4
 python -m metapilot evaluate --config configs/local_full.yaml --meta data/local_full --out runs/local_full_nolm --drop-group landmarkers
 python -m metapilot flaml --config configs/local_full.yaml --meta data/local_full --budget 5 --max-tasks 60
+
+# Full study: build (about 20 CPU-hours; shard it with --shard i/n), or reuse the committed meta-dataset
+python -m metapilot build --config configs/full.yaml --out data/full
+python -m metapilot evaluate --config configs/full.yaml --meta metadata/full --out runs/full --seeds 1 2 3 4
 ```
