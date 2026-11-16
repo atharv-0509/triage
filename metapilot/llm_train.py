@@ -3,7 +3,7 @@
 
 Needs the ``llm`` extra (``pip install -e ".[llm]"``) and, for the real
 model, a GPU: Qwen2.5-1.5B-Instruct in 4-bit fits a free Colab T4. See
-``notebooks/phase2_qlora_colab.ipynb`` for the full loop.
+``notebooks/phase2_qlora.ipynb`` for the full loop.
 
 The protocol matches Phase 1: for outer fold k, the adapter is trained only
 on tasks whose fold is not k, and predicts only tasks whose fold is k. Raw

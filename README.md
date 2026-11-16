@@ -10,7 +10,7 @@ dataset it has not seen.
 * **Phase 1**: kNN and LightGBM meta-models trained on 14 numeric meta-features. Implemented and run.
 * **Phase 2**: QLoRA fine-tuned Qwen2.5-1.5B-Instruct that ranks pipelines from a text profile of the dataset.
   Prompts, training, generation and scoring are implemented and tested end to end with a tiny offline model; the
-  real fine-tuning run needs a GPU (`notebooks/phase2_qlora_colab.ipynb`) and **has not been run yet**.
+  real fine-tuning run needs a GPU (`notebooks/phase2_qlora.ipynb`) and **has not been run yet**.
 * **Demo**: a Gradio app that ranks the portfolio for an uploaded CSV (`app/demo.py`).
 
 ## Quick start
@@ -88,21 +88,32 @@ information LightGBM gets (research question 2). **Prompt B (semantic)** adds th
 description (research question 3). The target is the full portfolio ordered by measured accuracy. Each record
 carries its outer fold from `folds.csv`, the split every method shares.
 
-Fine-tuning and generation run on a GPU. The Colab notebook `notebooks/phase2_qlora_colab.ipynb` runs the whole
-loop on a free T4:
+Fine-tuning and generation run on a GPU. The notebook `notebooks/phase2_qlora.ipynb` runs the whole loop on a
+free T4, on Colab or Kaggle (it detects which), or on any machine with a GPU.
 
-1. Open it in Colab: File > Open notebook > GitHub, enter `atharv-0509/triage`, choose branch
-   `claude/starting-from-beginning-joh2ym`, then pick `notebooks/phase2_qlora_colab.ipynb`.
+**Colab**
+1. File > Open notebook > GitHub, enter `atharv-0509/triage`, choose branch `claude/starting-from-beginning-joh2ym`,
+   then pick `notebooks/phase2_qlora.ipynb`.
 2. Runtime > Change runtime type > **T4 GPU**, then Runtime > Run all, and allow Google Drive access.
-3. Check the coverage the notebook prints after the base model and after the first fine-tuned fold. If it is far
-   below 100%, stop: the model is not producing rankings.
-4. Results, adapters and raw predictions are in `MyDrive/metapilot_phase2/<RUN_NAME>/`. If Colab disconnects,
-   run all again; finished folds are skipped.
+3. Work is saved to `MyDrive/metapilot_phase2/<RUN_NAME>/` after every fold. After a disconnect, run all again;
+   finished folds are skipped.
 
-By default it builds the pilot meta-dataset in Colab. For another meta-dataset (such as the full OpenML study),
-copy its folder to Drive and change `META`, `CONFIG` and `RUN_NAME` in the first cell. The notebook was run end to
-end on CPU with a tiny stand-in model (only the Colab-specific lines patched out); it has not yet run on a T4 with
-Qwen. The same steps from the command line:
+**Kaggle** (30 GPU-hours a week, runs of up to 12 hours)
+1. Create a notebook and use File > Import Notebook with the notebook's GitHub URL, or upload the `.ipynb`.
+2. In the settings panel set Accelerator to **GPU T4 x2** (the notebook uses one of the two) and turn **Internet**
+   on. Internet access needs a phone-verified Kaggle account.
+3. Save Version > **Save & Run All (Commit)**. The run continues without the browser open, and
+   `/kaggle/working/metapilot_phase2/<RUN_NAME>/` becomes the version's output.
+4. To resume an unfinished run, add that version's output as an input (Add Input > Your Work) and commit again.
+   Finished folds are copied in and skipped.
+
+On either platform, check the coverage the notebook prints after the base model and after the first fine-tuned
+fold. If it is far below 100%, stop: the model is not producing rankings. By default the notebook builds the pilot
+meta-dataset itself. For the full OpenML study, set `CONFIG = "configs/full.yaml"`, `META = "metadata/full"` and
+`RUN_NAME = "full"` in the first cell once `metadata/full/` has been pushed. The notebook was run end to end on CPU
+with a tiny stand-in model; it has not yet run on a T4 with Qwen.
+
+The same steps from the command line:
 
 ```bash
 pip install -e ".[llm]" bitsandbytes
@@ -158,7 +169,7 @@ accuracies.
 | `metapilot/llm_train.py` | 4.4 | QLoRA fine-tuning per outer fold and batched generation (GPU; `llm` extra) |
 | `metapilot/recommend.py` | 6 | Recommendations for a new dataset, with similar tasks and optional verification |
 | `app/demo.py` | 6 | Gradio demo |
-| `notebooks/phase2_qlora_colab.ipynb` | 4.4 | Colab T4 notebook for the Phase 2 runs |
+| `notebooks/phase2_qlora.ipynb` | 4.4 | Notebook for the Phase 2 runs (Colab, Kaggle or any GPU) |
 
 ## Outputs
 

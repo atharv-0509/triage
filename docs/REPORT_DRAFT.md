@@ -130,7 +130,7 @@ measured against the best of 38 CV estimates. The full-study run uses a budget m
 ## 5. Phase 2: LLM selector (RQ2, RQ3)
 
 **Not yet run.** The protocol is implemented (`metapilot/llm.py`, `metapilot/llm_train.py`,
-`notebooks/phase2_qlora_colab.ipynb`) and tested end to end with a tiny offline model. The three variants to run
+`notebooks/phase2_qlora.ipynb`) and tested end to end with a tiny offline model. The three variants to run
 are: base model zero-shot with Prompt A, fine-tuned on Prompt A, and fine-tuned on Prompt B. Each fine-tuned
 variant needs one adapter per outer fold.
 
