@@ -54,9 +54,13 @@ def _load_model(model_id: str, load_in_4bit: bool | None):
             raise RuntimeError("4-bit loading needs a CUDA GPU; pass load_in_4bit=False to run on CPU")
         from transformers import BitsAndBytesConfig
 
+        compute = torch.bfloat16 if native_bf16() else torch.float16
         kwargs["quantization_config"] = BitsAndBytesConfig(
             load_in_4bit=True, bnb_4bit_quant_type="nf4", bnb_4bit_use_double_quant=True,
-            bnb_4bit_compute_dtype=torch.bfloat16 if native_bf16() else torch.float16)
+            bnb_4bit_compute_dtype=compute)
+        # Without this, transformers 5 loads the non-quantized parts in the
+        # checkpoint's dtype (bfloat16 for Qwen), which a T4 can only emulate.
+        kwargs["dtype"] = compute
         kwargs["device_map"] = "auto"
     elif cuda:
         kwargs["dtype"] = torch.float16
@@ -66,6 +70,24 @@ def _load_model(model_id: str, load_in_4bit: bool | None):
         tok.pad_token = tok.eos_token
     model = AutoModelForCausalLM.from_pretrained(model_id, **kwargs)
     return model, tok, load_in_4bit
+
+
+def adapter_dtype_for_mixed_precision(model, bf16: bool) -> None:
+    """Keep trainable (LoRA) weights in float32 unless training in bf16.
+
+    For quantized models TRL casts the adapter weights to bfloat16 regardless
+    of the precision setting. fp16 mixed precision (the only option on a T4)
+    scales gradients with a GradScaler, which cannot unscale bfloat16
+    gradients and stops with "_amp_foreach_non_finite_check_and_unscale_cuda
+    not implemented for 'BFloat16'". Must run before the optimizer is created.
+    """
+    import torch
+
+    if bf16:
+        return
+    for param in model.parameters():
+        if param.requires_grad and param.dtype != torch.float32:
+            param.data = param.data.float()
 
 
 def train(prompts_path: str | Path, fold: int, kind: str, out_dir: str | Path, model_id: str = DEFAULT_MODEL,
@@ -107,6 +129,7 @@ def train(prompts_path: str | Path, fold: int, kind: str, out_dir: str | Path, m
     peft = LoraConfig(r=lora_r, lora_alpha=lora_alpha, lora_dropout=0.05, bias="none", task_type="CAUSAL_LM",
                       target_modules=["q_proj", "k_proj", "v_proj", "o_proj", "gate_proj", "up_proj", "down_proj"])
     trainer = SFTTrainer(model=model, args=args, train_dataset=ds, processing_class=tok, peft_config=peft)
+    adapter_dtype_for_mixed_precision(trainer.model, bf16)
     result = trainer.train()
     trainer.save_model(str(out))
     tok.save_pretrained(str(out))

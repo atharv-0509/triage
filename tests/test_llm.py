@@ -119,3 +119,17 @@ def test_t4_uses_fp16(monkeypatch):
     assert llm_train.native_bf16() is False
     monkeypatch.setattr(torch.cuda, "get_device_capability", lambda device=None: (8, 0))  # A100
     assert llm_train.native_bf16() is True
+
+
+def test_adapters_float32_for_fp16_training():
+    torch = pytest.importorskip("torch")
+    from metapilot.llm_train import adapter_dtype_for_mixed_precision
+
+    model = torch.nn.Sequential(torch.nn.Linear(4, 4), torch.nn.Linear(4, 4))
+    model[0].requires_grad_(False)
+    model.to(torch.bfloat16)  # what TRL does to QLoRA adapters
+    adapter_dtype_for_mixed_precision(model, bf16=True)
+    assert model[1].weight.dtype == torch.bfloat16  # bf16 training: leave as is
+    adapter_dtype_for_mixed_precision(model, bf16=False)
+    assert model[1].weight.dtype == torch.float32 and model[1].bias.dtype == torch.float32
+    assert model[0].weight.dtype == torch.bfloat16  # frozen weights untouched
