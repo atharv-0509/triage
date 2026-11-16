@@ -30,6 +30,17 @@ def _messages(row: dict, kind: str) -> list[dict]:
     return [{"role": "system", "content": row["system"]}, {"role": "user", "content": row[kind]}]
 
 
+def native_bf16() -> bool:
+    """True only on GPUs with hardware bfloat16 (Ampere, compute capability 8.0+).
+
+    ``torch.cuda.is_bf16_supported()`` also counts emulation, so it says yes on
+    a Colab T4 (7.5), where bf16 training fails or crawls; T4 must use fp16.
+    """
+    import torch
+
+    return torch.cuda.is_available() and torch.cuda.get_device_capability()[0] >= 8
+
+
 def _load_model(model_id: str, load_in_4bit: bool | None):
     import torch
     from transformers import AutoModelForCausalLM, AutoTokenizer
@@ -45,7 +56,7 @@ def _load_model(model_id: str, load_in_4bit: bool | None):
 
         kwargs["quantization_config"] = BitsAndBytesConfig(
             load_in_4bit=True, bnb_4bit_quant_type="nf4", bnb_4bit_use_double_quant=True,
-            bnb_4bit_compute_dtype=torch.bfloat16 if torch.cuda.is_bf16_supported() else torch.float16)
+            bnb_4bit_compute_dtype=torch.bfloat16 if native_bf16() else torch.float16)
         kwargs["device_map"] = "auto"
     elif cuda:
         kwargs["dtype"] = torch.float16
@@ -83,7 +94,7 @@ def train(prompts_path: str | Path, fold: int, kind: str, out_dir: str | Path, m
 
     model, tok, four_bit = _load_model(model_id, load_in_4bit)
     cuda = torch.cuda.is_available()
-    bf16 = cuda and torch.cuda.is_bf16_supported()
+    bf16 = native_bf16()
     out = Path(out_dir)
     args = SFTConfig(
         output_dir=str(out / "checkpoints"), num_train_epochs=epochs, max_steps=max_steps,

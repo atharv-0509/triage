@@ -184,9 +184,10 @@ def llm_scores(preds: list[dict], meta: MetaData, folds: pd.Series) -> tuple[pd.
         order = named + [p for p in fallback[folds.loc[task_id]] if p not in named]
         rows[task_id] = {p: float(len(order) - i) for i, p in enumerate(order)}
         coverage[task_id] = len(named) / len(pipelines)
-    scores = pd.DataFrame.from_dict(rows, orient="index")[pipelines]
+    order = [t for t in folds.index if t in rows]  # meta-dataset order, as for every other selector
+    scores = pd.DataFrame.from_dict(rows, orient="index").loc[order, pipelines]
     scores.index.name = "task_id"
-    return scores, pd.Series(coverage, name="coverage")
+    return scores, pd.Series(coverage, name="coverage").loc[order]
 
 
 def prediction_files(meta_dir: str | Path) -> dict[str, Path]:

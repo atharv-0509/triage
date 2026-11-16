@@ -89,7 +89,20 @@ description (research question 3). The target is the full portfolio ordered by m
 carries its outer fold from `folds.csv`, the split every method shares.
 
 Fine-tuning and generation run on a GPU. The Colab notebook `notebooks/phase2_qlora_colab.ipynb` runs the whole
-loop on a free T4 and saves to Google Drive after every fold. The same steps from the command line:
+loop on a free T4:
+
+1. Open it in Colab: File > Open notebook > GitHub, enter `atharv-0509/triage`, choose branch
+   `claude/starting-from-beginning-joh2ym`, then pick `notebooks/phase2_qlora_colab.ipynb`.
+2. Runtime > Change runtime type > **T4 GPU**, then Runtime > Run all, and allow Google Drive access.
+3. Check the coverage the notebook prints after the base model and after the first fine-tuned fold. If it is far
+   below 100%, stop: the model is not producing rankings.
+4. Results, adapters and raw predictions are in `MyDrive/metapilot_phase2/<RUN_NAME>/`. If Colab disconnects,
+   run all again; finished folds are skipped.
+
+By default it builds the pilot meta-dataset in Colab. For another meta-dataset (such as the full OpenML study),
+copy its folder to Drive and change `META`, `CONFIG` and `RUN_NAME` in the first cell. The notebook was run end to
+end on CPU with a tiny stand-in model (only the Colab-specific lines patched out); it has not yet run on a T4 with
+Qwen. The same steps from the command line:
 
 ```bash
 pip install -e ".[llm]" bitsandbytes

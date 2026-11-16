@@ -67,6 +67,8 @@ def test_llm_rows_in_evaluate(meta_copy, tiny_cfg):
     sb = pd.read_csv(meta_copy.parent / "run" / "scores" / "single_best.csv", index_col="task_id")
     sc = pd.read_csv(meta_copy.parent / "run" / "scores" / "llm_silent.csv", index_col="task_id")
     assert (sb.rank(axis=1, method="first") == sc.rank(axis=1, method="first")).all().all()
+    for col in ("regret@1", "regret@1_lo", "regret@1_hi", "regret@3"):  # same tasks, same order, same CIs
+        assert silent[col] == pytest.approx(summary.loc["Single best", col])
     real = pd.read_csv(meta_copy.parent / "run" / "summary_real.csv", index_col="selector")
     assert real.loc["LLM: oracle", "n_tasks"] == 4  # iris and wine, 2 subsamples each
     assert "LLM named 0%" in experiment.format_summary(summary)
@@ -105,3 +107,15 @@ def test_train_and_predict_tiny_model(meta_copy, tmp_path):
     assert sorted(p["task_id"] for p in preds) == sorted(test_ids)  # resumed, no duplicates
     with pytest.raises(ValueError, match="trained for fold 0"):
         llm_train.predict(prompts, "semantic", tmp_path / "x.jsonl", str(model), adapter, fold=1)
+
+
+def test_t4_uses_fp16(monkeypatch):
+    torch = pytest.importorskip("torch")
+    from metapilot import llm_train
+
+    monkeypatch.setattr(torch.cuda, "is_available", lambda: True)
+    monkeypatch.setattr(torch.cuda, "is_bf16_supported", lambda including_emulation=True: True)
+    monkeypatch.setattr(torch.cuda, "get_device_capability", lambda device=None: (7, 5))  # Tesla T4
+    assert llm_train.native_bf16() is False
+    monkeypatch.setattr(torch.cuda, "get_device_capability", lambda device=None: (8, 0))  # A100
+    assert llm_train.native_bf16() is True
