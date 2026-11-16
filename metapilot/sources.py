@@ -187,6 +187,7 @@ def load_openml(cfg: Config) -> list[Dataset]:
         raise ImportError("The 'openml' source needs `pip install openml`.") from e
 
     openml.config.set_root_cache_directory(cfg.openml_cache_dir)
+    _patch_openml_parquet_download(openml)
     out: list[Dataset] = []
     seen: set[int] = set()
 
@@ -212,6 +213,44 @@ def load_openml(cfg: Config) -> list[Dataset]:
         except Exception as e:  # noqa: BLE001
             log.warning("skipping OpenML dataset %s: %s", ref, e)
     return out
+
+
+def _download_parquet_https(source: str, destination, exists_ok: bool = True, proxy=None) -> None:
+    """Drop-in for ``openml._api_calls._download_minio_file`` that uses HTTPS.
+
+    openml 0.15 builds its MinIO client with ``secure=False``, so parquet files
+    are requested over plain HTTP. Behind an HTTPS-only proxy that fails (405),
+    and openml falls back to the ARFF URL on ``openml.org``, which may not be
+    reachable either. The parquet objects are public, so a plain HTTPS GET of
+    the same URL is enough.
+    """
+    import urllib.parse
+    from pathlib import Path
+
+    import requests
+
+    parsed = urllib.parse.urlparse(source)
+    url = parsed._replace(scheme="https").geturl()
+    destination = Path(destination)
+    if destination.is_dir():
+        destination = destination / parsed.path.rsplit("/", 1)[-1]
+    if destination.is_file():
+        if not exists_ok:
+            raise FileExistsError(f"File already exists in {destination}.")
+        return
+    resp = requests.get(url, timeout=300)
+    if resp.status_code == 404:
+        raise FileNotFoundError(f"Object at '{url}' does not exist.")
+    if resp.status_code != 200:
+        raise FileNotFoundError(f"Could not download {url}: HTTP {resp.status_code}")
+    destination.parent.mkdir(parents=True, exist_ok=True)
+    tmp = destination.with_name(destination.name + ".part")
+    tmp.write_bytes(resp.content)
+    tmp.replace(destination)
+
+
+def _patch_openml_parquet_download(openml_module) -> None:
+    openml_module._api_calls._download_minio_file = _download_parquet_https
 
 
 def _openml_to_dataset(ds, target: str, source: str) -> Dataset:
