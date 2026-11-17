@@ -92,8 +92,8 @@ Fine-tuning and generation run on a GPU. The notebook `notebooks/phase2_qlora.ip
 free T4, on Colab or Kaggle (it detects which), or on any machine with a GPU.
 
 **Colab**
-1. File > Open notebook > GitHub, enter `atharv-0509/triage`, choose branch `claude/starting-from-beginning-joh2ym`,
-   then pick `notebooks/phase2_qlora.ipynb`.
+1. File > Open notebook > GitHub, enter `atharv-0509/triage` (branch `main`), then pick
+   `notebooks/phase2_qlora.ipynb`.
 2. Runtime > Change runtime type > **T4 GPU**, then Runtime > Run all, and allow Google Drive access.
 3. Work is saved to `MyDrive/metapilot_phase2/<RUN_NAME>/` after every fold. After a disconnect, run all again;
    finished folds are skipped.
